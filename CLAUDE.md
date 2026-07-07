@@ -140,8 +140,32 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
 - ✅ **Paso 2 — Postgres + Drizzle** hecho: `docker-compose.yml` (Postgres 17),
   `lib/db/schema.ts` (`todos`, `chat_messages`), `lib/db/index.ts` (cliente), migración
   `0000` generada y aplicada. Verificado con un round-trip insert/select/delete.
-- ⬜ **Paso 3 — Route handlers:** CRUD de tareas + `/api/chat` con streaming.
-- ⬜ **Paso 4 — UI:** lista editable + panel de chat.
+- 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
+  `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; verificado end-to-end
+  contra la BD). ⬜ Falta `/api/chat` con streaming (requiere `ANTHROPIC_API_KEY`).
+- 🔶 **Paso 4 — UI:** lista de tareas ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
+  cliente que consume el CRUD: crear, completar, editar inline, eliminar; estados de carga,
+  error y vacío). Build de producción limpio y render verificado. ⬜ Falta el panel de chat.
 
-Nota: Node se instala vía nvm (v24) y no está en el PATH por defecto; para correr
-`npm`/`npx` hay que `source ~/.nvm/nvm.sh` primero (o usar una terminal interactiva).
+## Cómo retomar (próxima sesión)
+
+Único pendiente: **el chat de IA** (todo lo demás funciona end-to-end). En orden:
+
+1. Poner un `ANTHROPIC_API_KEY` real en `.env.local` (ahora está vacío).
+2. Implementar `app/api/chat/route.ts` con streaming — ver el patrón de referencia en
+   "Integración con Claude (reglas)". Verificar la API exacta del SDK contra
+   `node_modules/@anthropic-ai/sdk` al implementar (y `node_modules/next/dist/docs/` por
+   ser Next 16).
+3. Persistir cada turno en `chat_messages` y reenviar el historial completo en cada
+   request (la API de Claude es *stateless*).
+4. Panel de chat en la UI: componente cliente que consume `/api/chat` por streaming.
+
+## Entorno de desarrollo (recordatorios)
+
+- **Node** vía nvm (v24), no está en el PATH por defecto: `source ~/.nvm/nvm.sh` antes de
+  `npm`/`npx` (o usar una terminal interactiva).
+- **Docker:** el usuario no está en el grupo `docker`, así que la BD se levanta con
+  `sudo docker compose up -d` (o añadirlo al grupo una vez: `sudo usermod -aG docker $USER`
+  y reiniciar sesión). Los datos persisten en el volumen `pgdata`.
+- Hay una tarea de ejemplo ("Probar la UI") sembrada en la BD durante las pruebas; se
+  puede borrar desde la propia UI.
