@@ -1,7 +1,10 @@
 import type { NextRequest } from "next/server";
 import { desc } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { todos } from "@/lib/db/schema";
+import { todos, todoPriority } from "@/lib/db/schema";
+import type { TodoPriority } from "@/lib/db/schema";
+
+const PRIORITIES = todoPriority.enumValues as readonly string[];
 
 // pg/drizzle requieren runtime Node (no edge).
 export const runtime = "nodejs";
@@ -25,6 +28,18 @@ export async function POST(request: NextRequest) {
     return Response.json({ error: "El título es obligatorio" }, { status: 400 });
   }
 
-  const [created] = await db.insert(todos).values({ title }).returning();
+  const rawPriority = (body as Record<string, unknown>).priority;
+  let priority: TodoPriority | undefined;
+  if (rawPriority !== undefined) {
+    if (typeof rawPriority !== "string" || !PRIORITIES.includes(rawPriority)) {
+      return Response.json({ error: "priority inválido" }, { status: 400 });
+    }
+    priority = rawPriority as TodoPriority;
+  }
+
+  const [created] = await db
+    .insert(todos)
+    .values({ title, ...(priority ? { priority } : {}) })
+    .returning();
   return Response.json(created, { status: 201 });
 }

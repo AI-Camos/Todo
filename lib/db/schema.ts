@@ -1,9 +1,21 @@
-import { pgTable, serial, text, boolean, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, pgEnum, serial, text, timestamp } from "drizzle-orm/pg-core";
+
+// Estado de una tarea = columna del tablero Kanban.
+export const todoStatus = pgEnum("todo_status", [
+  "todo", // Por hacer
+  "doing", // En progreso
+  "paused", // En pausa
+  "done", // Hecho
+]);
+
+// Prioridad de una tarea (ordena las tarjetas dentro de cada columna).
+export const todoPriority = pgEnum("todo_priority", ["low", "medium", "high"]);
 
 export const todos = pgTable("todos", {
   id: serial("id").primaryKey(),
   title: text("title").notNull(),
-  completed: boolean("completed").notNull().default(false),
+  status: todoStatus("status").notNull().default("todo"),
+  priority: todoPriority("priority").notNull().default("medium"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -15,6 +27,9 @@ export const chatMessages = pgTable("chat_messages", {
   content: text("content").notNull(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+export type TodoStatus = (typeof todoStatus.enumValues)[number];
+export type TodoPriority = (typeof todoPriority.enumValues)[number];
 
 export type Todo = typeof todos.$inferSelect;
 export type NewTodo = typeof todos.$inferInsert;

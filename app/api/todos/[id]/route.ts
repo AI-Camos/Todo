@@ -1,15 +1,20 @@
 import type { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { todos } from "@/lib/db/schema";
+import { todos, todoStatus, todoPriority } from "@/lib/db/schema";
+import type { TodoStatus, TodoPriority } from "@/lib/db/schema";
 
 export const runtime = "nodejs";
 
 type Context = { params: Promise<{ id: string }> };
 
-function parseId(raw: string): number | null {
+const STATUSES = todoStatus.enumValues as readonly string[];
+const PRIORITIES = todoPriority.enumValues as readonly string[];
+
+export function parseId(raw: string): number | null {
   const id = Number(raw);
-  return Number.isInteger(id) ? id : null;
+  // Los ids son `serial` (>= 1); Number("") es 0, así que exigimos positivo.
+  return Number.isInteger(id) && id > 0 ? id : null;
 }
 
 // PATCH /api/todos/:id — edita título y/o estado completado.
@@ -23,9 +28,13 @@ export async function PATCH(request: NextRequest, { params }: Context) {
   if (!body || typeof body !== "object") {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const { title, completed } = body as Record<string, unknown>;
+  const { title, status, priority } = body as Record<string, unknown>;
 
-  const updates: Partial<{ title: string; completed: boolean }> = {};
+  const updates: Partial<{
+    title: string;
+    status: TodoStatus;
+    priority: TodoPriority;
+  }> = {};
   if (typeof title === "string") {
     const trimmed = title.trim();
     if (!trimmed) {
@@ -36,12 +45,21 @@ export async function PATCH(request: NextRequest, { params }: Context) {
     }
     updates.title = trimmed;
   }
-  if (typeof completed === "boolean") {
-    updates.completed = completed;
+  if (status !== undefined) {
+    if (typeof status !== "string" || !STATUSES.includes(status)) {
+      return Response.json({ error: "status inválido" }, { status: 400 });
+    }
+    updates.status = status as TodoStatus;
+  }
+  if (priority !== undefined) {
+    if (typeof priority !== "string" || !PRIORITIES.includes(priority)) {
+      return Response.json({ error: "priority inválido" }, { status: 400 });
+    }
+    updates.priority = priority as TodoPriority;
   }
   if (Object.keys(updates).length === 0) {
     return Response.json(
-      { error: "Nada que actualizar (envía title o completed)" },
+      { error: "Nada que actualizar (envía title, status o priority)" },
       { status: 400 },
     );
   }

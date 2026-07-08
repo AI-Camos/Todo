@@ -140,12 +140,18 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
 - ✅ **Paso 2 — Postgres + Drizzle** hecho: `docker-compose.yml` (Postgres 17),
   `lib/db/schema.ts` (`todos`, `chat_messages`), `lib/db/index.ts` (cliente), migración
   `0000` generada y aplicada. Verificado con un round-trip insert/select/delete.
+  Migración `0001` (aplicada): `todos` pasó de `completed` (boolean) a un enum `status`
+  (`todo_status`: todo/doing/paused/done) más un enum `priority` (`todo_priority`:
+  low/medium/high, default medium). El backfill mapea `completed=true → done`.
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
-  `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; verificado end-to-end
-  contra la BD). ⬜ Falta `/api/chat` con streaming (requiere `ANTHROPIC_API_KEY`).
-- 🔶 **Paso 4 — UI:** lista de tareas ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
-  cliente que consume el CRUD: crear, completar, editar inline, eliminar; estados de carga,
-  error y vacío). Build de producción limpio y render verificado. ⬜ Falta el panel de chat.
+  `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
+  y `priority` contra los enums; verificado end-to-end contra la BD). ⬜ Falta `/api/chat`
+  con streaming (requiere `ANTHROPIC_API_KEY`).
+- 🔶 **Paso 4 — UI:** tablero Kanban ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
+  cliente con `@dnd-kit`: 4 columnas por `status`, tarjetas arrastrables que cambian de
+  estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
+  y eliminar; orden dentro de columna por prioridad y recencia; estados de carga/error).
+  Build de producción limpio. ⬜ Falta el panel de chat.
 
 ## Cómo retomar (próxima sesión)
 
