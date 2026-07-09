@@ -150,6 +150,10 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   Clockify) con `todo_id` (FK→todos, `ON DELETE CASCADE`), `date`, `hour` (0-23) y su
   propio `status`. Verificado el borrado en cascada. Migración `0003` (aplicada): columna
   `duration` (horas, default 1) para bloques multi-hora; la API valida `hour+duration<=24`.
+  Migración `0004` (aplicada): `hour` y `duration` pasaron de `integer` a `real` para
+  soportar **medias horas** (paso 0.5: `6.5` = 06:30). Sin backfill (los enteros existentes
+  se castean a `x.0`). La API valida ahora pasos de 0.5 (`hour` 0–23.5, `duration` >=0.5)
+  vía un helper `isHalfStep`. Verificado round-trip con `hour:6.5, duration:1.5`.
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
   `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
   y `priority` contra los enums). Calendario ✅ (`app/api/schedule/route.ts` GET por rango
@@ -164,7 +168,22 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   con bloques posicionados en absoluto — ocupan varias filas según `duration` y se reparten
   en carriles al solaparse; navegación de semana con fechas reales, clic en hueco → selector
   de tarea con duración, clic en bloque → modal de estado/duración/quitar, y una barra de
-  "ahora" que recorre el tablero; updates optimistos). Navegación Tablero↔Semana. Dark mode
+  "ahora" que recorre el tablero; updates optimistos). Mover bloques con **drag & drop**
+  (HTML5 nativo, no `@dnd-kit`: el `drop` se maneja a nivel de columna y calcula la hora
+  desde la Y del cursor; `PATCH date/hour` optimista con clamp a medianoche) y **copiar/pegar**
+  estilo portapapeles (`Ctrl/⌘+C` → cursor sobre un hueco + `Ctrl/⌘+V`, o clic en el hueco,
+  crea la réplica vía `POST`; `Esc` cancela). **Selección múltiple** (`Ctrl/⌘/Shift+clic`
+  alterna sin abrir el modal) para operar sobre un grupo: arrastrar mueve todos conservando
+  su forma (mismo desfase días/horas, `PATCH` en lote) y copiar/pegar recoloca el grupo
+  respecto a un ancla (el bloque más temprano) mediante desfases relativos (`POST` en lote);
+  `clampHourDelta` recorta el desfase para que ningún bloque del grupo se salga de las horas
+  válidas. Eliminar en lote la selección (botón **Eliminar** o tecla `Supr`/`Backspace`;
+  `DELETE` en lote, 404 tratado como ya borrado). Los atajos de teclado se ignoran mientras
+  se escribe en un input. Barra flotante con contador de selección/portapapeles y acciones.
+  Rejilla en **medias horas** (paso 0.5): ranuras de fondo de 30 min (líneas de hora
+  sólidas, de media hora punteadas), el drop encaja a la media hora más cercana, y los
+  selectores de duración van en pasos de 0.5 con etiquetas tipo "30 min" / "1 h 30 min"
+  (`fmtTime`/`fmtDuration`). Navegación Tablero↔Semana. Dark mode
   conmutable (`app/theme-toggle.tsx` +
   `data-theme` en <html>, con script pre-render anti-flash; el `dark:` de Tailwind se
   redefine por atributo en `globals.css`). Build de producción limpio. ⬜ Falta el chat.

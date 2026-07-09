@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Status = "todo" | "doing" | "paused" | "done";
 type Priority = "low" | "medium" | "high";
@@ -24,13 +24,30 @@ type Block = {
   priority: Priority;
 };
 
+// Item del portapapeles: la tarea + su desfase (días/horas) respecto al ancla
+// del grupo copiado, para recolocar el grupo al pegar conservando su forma.
+type ClipItem = {
+  todoId: number;
+  title: string;
+  duration: number;
+  dayOffset: number;
+  hourOffset: number;
+};
+
 const START_HOUR = 6;
 const END_HOUR = 23;
+const STEP = 0.5; // granularidad: media hora
 const HOURS = Array.from(
   { length: END_HOUR - START_HOUR + 1 },
   (_, i) => START_HOUR + i,
-); // 6..23
+); // 6..23 (para etiquetas y líneas de hora)
+// Ranuras de media hora para colocar/pegar: 6, 6.5, …, 23.5
+const SLOTS = Array.from(
+  { length: (END_HOUR - START_HOUR + 1) * 2 },
+  (_, i) => START_HOUR + i * STEP,
+);
 const ROW_H = 48; // px por hora
+const HALF_H = ROW_H * STEP; // px por media hora
 const BODY_H = HOURS.length * ROW_H;
 
 const DOW = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
@@ -72,6 +89,18 @@ const STATUS_UI: Record<
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
+// Formatea una hora fraccionaria (6.5 → "06:30").
+const fmtTime = (h: number) => `${pad(Math.floor(h))}:${pad((h % 1) * 60)}`;
+
+// Formatea una duración en horas fraccionarias (0.5 → "30 min", 1.5 → "1 h 30 min").
+function fmtDuration(d: number): string {
+  const h = Math.floor(d);
+  const m = Math.round((d % 1) * 60);
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
 // --- helpers de fecha (en hora local, trabajando con 'YYYY-MM-DD') ---
 function toISO(d: Date): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -87,6 +116,16 @@ function addDays(d: Date, n: number): Date {
   const x = new Date(d);
   x.setDate(x.getDate() + n);
   return x;
+}
+function isoAddDays(iso: string, n: number): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return toISO(addDays(new Date(y, m - 1, d), n));
+}
+function daysBetween(a: string, b: string): number {
+  const [ay, am, ad] = a.split("-").map(Number);
+  const [by, bm, bd] = b.split("-").map(Number);
+  const ms = new Date(by, bm - 1, bd).getTime() - new Date(ay, am - 1, ad).getTime();
+  return Math.round(ms / 86_400_000);
 }
 
 // Reparte los bloques de un día en carriles para que los solapes no se pisen.
@@ -119,6 +158,14 @@ export default function WeekCalendar() {
   );
   const [statusFor, setStatusFor] = useState<Block | null>(null);
   const [nowTick, setNowTick] = useState(() => Date.now());
+  // Selección (múltiple) + portapapeles para copiar/pegar bloques.
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [clipboard, setClipboard] = useState<ClipItem[] | null>(null);
+  // Día resaltado mientras se arrastra un bloque.
+  const [dragOverDay, setDragOverDay] = useState<string | null>(null);
+  // Bloque que se está arrastrando y último hueco bajo el cursor (para Ctrl+V).
+  const draggingRef = useRef<Block | null>(null);
+  const hoverSlotRef = useRef<{ date: string; hour: number } | null>(null);
 
   const days = useMemo(
     () => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)),
@@ -243,6 +290,171 @@ export default function WeekCalendar() {
     }
   }
 
+  // Elimina en lote los bloques seleccionados (DELETE optimista con rollback).
+  async function removeSelection() {
+    const ids = selectedIds;
+    if (ids.length === 0) return;
+    const prev = blocks;
+    setBlocks((bs) => bs.filter((b) => !ids.includes(b.id)));
+    setSelectedIds([]);
+    setStatusFor(null);
+    setError(null);
+    try {
+      await Promise.all(
+        ids.map((id) =>
+          fetch(`/api/schedule/${id}`, { method: "DELETE" }).then((res) => {
+            // 404 = ya no existe; lo tratamos como borrado correcto.
+            if (!res.ok && res.status !== 404) throw new Error();
+          }),
+        ),
+      );
+    } catch {
+      setBlocks(prev);
+      setError("No se pudieron eliminar los bloques");
+    }
+  }
+
+  // Recorta el desfase de horas para que TODO el grupo quepa en el rango válido
+  // (nadie por debajo de START_HOUR ni pasándose de medianoche).
+  function clampHourDelta(
+    group: { hour: number; duration: number }[],
+    hourDelta: number,
+  ): number {
+    let lo = -Infinity;
+    let hi = Infinity;
+    for (const b of group) {
+      lo = Math.max(lo, START_HOUR - b.hour); // no bajar de START_HOUR
+      hi = Math.min(hi, 24 - b.duration - b.hour); // no pasar de medianoche
+    }
+    return Math.max(lo, Math.min(hourDelta, hi));
+  }
+
+  // Mueve un grupo de bloques (drag & drop) conservando su forma: aplica el
+  // mismo desfase de días/horas a todos. PATCH optimista en lote.
+  async function moveGroup(items: Block[], dayDelta: number, hourDelta: number) {
+    if (items.length === 0) return;
+    const hd = clampHourDelta(items, hourDelta);
+    if (dayDelta === 0 && hd === 0) return;
+    const moves = items.map((b) => ({
+      id: b.id,
+      date: isoAddDays(b.date, dayDelta),
+      hour: b.hour + hd,
+    }));
+    const byId = new Map(moves.map((m) => [m.id, m]));
+    const prev = blocks;
+    setBlocks((bs) =>
+      bs.map((b) => (byId.has(b.id) ? { ...b, ...byId.get(b.id)! } : b)),
+    );
+    setError(null);
+    try {
+      await Promise.all(
+        moves.map((m) =>
+          fetch(`/api/schedule/${m.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ date: m.date, hour: m.hour }),
+          }).then((res) => {
+            if (!res.ok) throw new Error();
+          }),
+        ),
+      );
+    } catch {
+      setBlocks(prev);
+      setError("No se pudieron mover los bloques");
+    }
+  }
+
+  // Pega el grupo del portapapeles: el ancla cae en (date, hour) y el resto se
+  // coloca según su desfase. POST en lote y añade los bloques creados.
+  async function pasteGroupAt(date: string, hour: number) {
+    if (!clipboard || clipboard.length === 0) return;
+    const baseHour = clampHourDelta(
+      clipboard.map((it) => ({ hour: it.hourOffset, duration: it.duration })),
+      hour,
+    );
+    setError(null);
+    try {
+      const created = await Promise.all(
+        clipboard.map((it) =>
+          fetch("/api/schedule", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              todoId: it.todoId,
+              date: isoAddDays(date, it.dayOffset),
+              hour: baseHour + it.hourOffset,
+              duration: it.duration,
+            }),
+          }).then((res) => {
+            if (!res.ok) throw new Error();
+            return res.json() as Promise<Block>;
+          }),
+        ),
+      );
+      setBlocks((prev) => [...prev, ...created]);
+    } catch {
+      setError("No se pudieron pegar los bloques");
+    }
+  }
+
+  // Copia la selección al portapapeles usando desfases relativos al ancla (el
+  // bloque más temprano por fecha y luego hora).
+  function copySelection() {
+    const sel = blocks.filter((b) => selectedIds.includes(b.id));
+    if (sel.length === 0) return;
+    const anchor = sel.reduce((a, b) =>
+      b.date < a.date || (b.date === a.date && b.hour < a.hour) ? b : a,
+    );
+    setClipboard(
+      sel.map((b) => ({
+        todoId: b.todoId,
+        title: b.title,
+        duration: b.duration,
+        dayOffset: daysBetween(anchor.date, b.date),
+        hourOffset: b.hour - anchor.hour,
+      })),
+    );
+    setStatusFor(null);
+  }
+
+  // Atajos de teclado: Ctrl/⌘+C copia la selección, Ctrl/⌘+V pega en el hueco
+  // bajo el cursor, Esc limpia portapapeles y selección.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // No secuestrar los atajos mientras se escribe en un campo (p. ej. el
+      // buscador del selector de tarea); solo Escape sigue activo.
+      const el = e.target as HTMLElement | null;
+      const typing =
+        el?.tagName === "INPUT" ||
+        el?.tagName === "TEXTAREA" ||
+        el?.isContentEditable;
+      const mod = e.ctrlKey || e.metaKey;
+      if (typing && e.key !== "Escape") return;
+      if (mod && (e.key === "c" || e.key === "C")) {
+        if (selectedIds.length === 0) return;
+        e.preventDefault();
+        copySelection();
+      } else if (mod && (e.key === "v" || e.key === "V")) {
+        const slot = hoverSlotRef.current;
+        if (!clipboard || !slot) return;
+        e.preventDefault();
+        pasteGroupAt(slot.date, slot.hour);
+      } else if (
+        (e.key === "Delete" || e.key === "Backspace") &&
+        selectedIds.length > 0
+      ) {
+        e.preventDefault();
+        removeSelection();
+      } else if (e.key === "Escape") {
+        if (clipboard) setClipboard(null);
+        else if (selectedIds.length > 0) setSelectedIds([]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [blocks, selectedIds, clipboard]);
+
   const rangeLabel = `${days[0].getDate()} ${MONTHS[days[0].getMonth()]} – ${days[6].getDate()} ${MONTHS[days[6].getMonth()]}`;
 
   return (
@@ -281,7 +493,10 @@ export default function WeekCalendar() {
             {STATUS_UI[s].label}
           </span>
         ))}
-        <span className="text-zinc-400">· clic en un bloque para cambiar estado/duración</span>
+        <span className="text-zinc-400">
+          · clic para editar · Ctrl/⌘+clic para seleccionar varios · arrastra para
+          mover · Ctrl+C / Ctrl+V para copiar
+        </span>
       </div>
 
       {error && (
@@ -345,24 +560,64 @@ export default function WeekCalendar() {
               return (
                 <div
                   key={iso}
+                  onDragOver={(e) => {
+                    if (!draggingRef.current) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (dragOverDay !== iso) setDragOverDay(iso);
+                  }}
+                  onDrop={(e) => {
+                    const block = draggingRef.current;
+                    if (!block) return;
+                    e.preventDefault();
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    // Encaja a la media hora más cercana según la Y del cursor.
+                    const hour =
+                      START_HOUR +
+                      Math.floor((e.clientY - rect.top) / HALF_H) * STEP;
+                    // Si el bloque arrastrado es parte de una selección múltiple,
+                    // mueve todo el grupo; si no, solo ese bloque.
+                    const group =
+                      selectedIds.includes(block.id) && selectedIds.length > 1
+                        ? blocks.filter((b) => selectedIds.includes(b.id))
+                        : [block];
+                    moveGroup(group, daysBetween(block.date, iso), hour - block.hour);
+                    draggingRef.current = null;
+                    setDragOverDay(null);
+                  }}
                   className={`relative border-l border-zinc-200 dark:border-zinc-800 ${
                     isToday ? "bg-zinc-900/[0.02] dark:bg-white/[0.03]" : ""
-                  }`}
+                  } ${dragOverDay === iso ? "bg-blue-500/10 dark:bg-blue-400/10" : ""}`}
                 >
-                  {/* Ranuras de fondo (líneas de hora + añadir) */}
-                  {HOURS.map((hour, i) => (
-                    <button
-                      key={hour}
-                      onClick={() => setPicker({ date: iso, hour })}
-                      aria-label={`Añadir tarea el ${iso} a las ${hour}:00`}
-                      style={{ top: i * ROW_H, height: ROW_H }}
-                      className="group/slot absolute inset-x-0 border-t border-zinc-100 hover:bg-zinc-50 dark:border-zinc-800/70 dark:hover:bg-zinc-800/40"
-                    >
-                      <span className="text-xs text-zinc-300 opacity-0 transition group-hover/slot:opacity-100 dark:text-zinc-600">
-                        +
-                      </span>
-                    </button>
-                  ))}
+                  {/* Ranuras de fondo (media hora): líneas de hora sólidas y de
+                      media hora punteadas + añadir/pegar. */}
+                  {SLOTS.map((slot, i) => {
+                    const onHour = Number.isInteger(slot);
+                    return (
+                      <button
+                        key={slot}
+                        onClick={() =>
+                          clipboard
+                            ? pasteGroupAt(iso, slot)
+                            : setPicker({ date: iso, hour: slot })
+                        }
+                        onMouseEnter={() => {
+                          hoverSlotRef.current = { date: iso, hour: slot };
+                        }}
+                        aria-label={`Añadir tarea el ${iso} a las ${fmtTime(slot)}`}
+                        style={{ top: i * HALF_H, height: HALF_H }}
+                        className={`group/slot absolute inset-x-0 hover:bg-zinc-50 dark:hover:bg-zinc-800/40 ${
+                          onHour
+                            ? "border-t border-zinc-100 dark:border-zinc-800/70"
+                            : "border-t border-dashed border-zinc-100/70 dark:border-zinc-800/40"
+                        }`}
+                      >
+                        <span className="text-xs text-zinc-300 opacity-0 transition group-hover/slot:opacity-100 dark:text-zinc-600">
+                          {clipboard ? "Pegar" : "+"}
+                        </span>
+                      </button>
+                    );
+                  })}
 
                   {/* Bloques */}
                   {placed.map(({ block, lane }) => {
@@ -373,15 +628,53 @@ export default function WeekCalendar() {
                     return (
                       <button
                         key={block.id}
-                        onClick={() => setStatusFor(block)}
-                        title={`${block.title} — ${ui.label} · ${pad(block.hour)}:00–${pad(block.hour + block.duration)}:00`}
+                        draggable
+                        onDragStart={(e) => {
+                          // Al arrastrar un bloque fuera de la selección, se pasa
+                          // a mover solo ese (selección = ese bloque).
+                          if (!selectedIds.includes(block.id)) {
+                            setSelectedIds([block.id]);
+                          }
+                          draggingRef.current = block;
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/plain", String(block.id));
+                        }}
+                        onDragEnd={() => {
+                          draggingRef.current = null;
+                          setDragOverDay(null);
+                        }}
+                        onMouseEnter={() => {
+                          hoverSlotRef.current = {
+                            date: block.date,
+                            hour: block.hour,
+                          };
+                        }}
+                        onClick={(e) => {
+                          // Ctrl/⌘/Shift+clic: alterna en la selección sin abrir
+                          // el modal. Clic normal: selecciona solo ese y lo edita.
+                          if (e.ctrlKey || e.metaKey || e.shiftKey) {
+                            setSelectedIds((ids) =>
+                              ids.includes(block.id)
+                                ? ids.filter((id) => id !== block.id)
+                                : [...ids, block.id],
+                            );
+                          } else {
+                            setSelectedIds([block.id]);
+                            setStatusFor(block);
+                          }
+                        }}
+                        title={`${block.title} — ${ui.label} · ${fmtTime(block.hour)}–${fmtTime(block.hour + block.duration)}`}
                         style={{
                           top: top + 1,
                           height: height - 2,
                           left: `calc(${lane * w}% + 2px)`,
                           width: `calc(${w}% - 4px)`,
                         }}
-                        className={`absolute z-10 flex flex-col overflow-hidden rounded border-l-2 px-1.5 py-1 text-left text-xs transition-shadow hover:shadow-md ${ui.block}`}
+                        className={`absolute z-10 flex cursor-grab flex-col overflow-hidden rounded border-l-2 px-1.5 py-1 text-left text-xs transition-shadow hover:shadow-md active:cursor-grabbing ${ui.block} ${
+                          selectedIds.includes(block.id)
+                            ? "ring-2 ring-zinc-800 dark:ring-white"
+                            : ""
+                        }`}
                       >
                         <span
                           className={`truncate font-medium ${block.status === "done" ? "line-through" : ""}`}
@@ -390,7 +683,7 @@ export default function WeekCalendar() {
                         </span>
                         {block.duration > 1 && (
                           <span className="mt-auto text-[10px] tabular-nums opacity-70">
-                            {pad(block.hour)}:00–{pad(block.hour + block.duration)}:00
+                            {fmtTime(block.hour)}–{fmtTime(block.hour + block.duration)}
                           </span>
                         )}
                       </button>
@@ -444,6 +737,58 @@ export default function WeekCalendar() {
           onClose={() => setStatusFor(null)}
         />
       )}
+
+      {clipboard && (
+        <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+          <div className="flex items-center gap-3 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+            <span className="text-zinc-600 dark:text-zinc-300">
+              <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                {clipboard.length === 1
+                  ? `«${clipboard[0].title}»`
+                  : `${clipboard.length} bloques`}
+              </span>{" "}
+              copiado · clic en un hueco o <kbd className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-800">Ctrl+V</kbd> para pegar
+            </span>
+            <button
+              onClick={() => setClipboard(null)}
+              className="rounded-full border border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!clipboard && selectedIds.length >= 2 && (
+        <div className="fixed inset-x-0 bottom-4 z-40 flex justify-center px-4">
+          <div className="flex items-center gap-3 rounded-full border border-zinc-200 bg-white px-4 py-2 text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+            <span className="text-zinc-600 dark:text-zinc-300">
+              <span className="font-medium text-zinc-800 dark:text-zinc-100">
+                {selectedIds.length} bloques
+              </span>{" "}
+              seleccionados · <kbd className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-800">Ctrl+C</kbd> copiar · <kbd className="rounded bg-zinc-100 px-1 font-mono text-xs dark:bg-zinc-800">Supr</kbd> eliminar · arrastra para mover
+            </span>
+            <button
+              onClick={copySelection}
+              className="rounded-full border border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Copiar
+            </button>
+            <button
+              onClick={removeSelection}
+              className="rounded-full border border-red-200 px-2 py-0.5 text-xs text-red-600 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/50"
+            >
+              Eliminar
+            </button>
+            <button
+              onClick={() => setSelectedIds([])}
+              className="rounded-full border border-zinc-300 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              Deseleccionar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -476,8 +821,10 @@ function StatusModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const maxDuration = 24 - block.hour;
-  const durationOptions = Array.from({ length: maxDuration }, (_, i) => i + 1);
+  const durationOptions = Array.from(
+    { length: Math.round((24 - block.hour) / STEP) },
+    (_, i) => (i + 1) * STEP,
+  );
 
   return (
     <div
@@ -492,7 +839,7 @@ function StatusModal({
           {block.title}
         </p>
         <p className="mb-3 text-xs text-zinc-500">
-          {block.date} · {pad(block.hour)}:00–{pad(block.hour + block.duration)}:00
+          {block.date} · {fmtTime(block.hour)}–{fmtTime(block.hour + block.duration)}
         </p>
 
         <p className="mb-1 text-xs font-medium text-zinc-500">Estado</p>
@@ -530,7 +877,7 @@ function StatusModal({
           >
             {durationOptions.map((h) => (
               <option key={h} value={h}>
-                {h} {h === 1 ? "hora" : "horas"}
+                {fmtDuration(h)}
               </option>
             ))}
           </select>
@@ -571,8 +918,10 @@ function TaskPicker({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const maxDuration = 24 - hour;
-  const durationOptions = Array.from({ length: maxDuration }, (_, i) => i + 1);
+  const durationOptions = Array.from(
+    { length: Math.round((24 - hour) / STEP) },
+    (_, i) => (i + 1) * STEP,
+  );
   const filtered = todos.filter((t) =>
     t.title.toLowerCase().includes(q.trim().toLowerCase()),
   );
@@ -587,7 +936,7 @@ function TaskPicker({
         onClick={(e) => e.stopPropagation()}
       >
         <p className="mb-2 text-sm font-medium text-zinc-700 dark:text-zinc-200">
-          Añadir tarea · {date} a las {pad(hour)}:00
+          Añadir tarea · {date} a las {fmtTime(hour)}
         </p>
 
         <label className="mb-2 flex items-center justify-between gap-2 text-sm">
@@ -599,7 +948,7 @@ function TaskPicker({
           >
             {durationOptions.map((h) => (
               <option key={h} value={h}>
-                {h} {h === 1 ? "hora" : "horas"}
+                {fmtDuration(h)}
               </option>
             ))}
           </select>

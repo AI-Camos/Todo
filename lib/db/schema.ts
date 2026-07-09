@@ -4,6 +4,7 @@ import {
   serial,
   text,
   integer,
+  real,
   timestamp,
   date,
 } from "drizzle-orm/pg-core";
@@ -37,8 +38,11 @@ export const scheduleBlocks = pgTable("schedule_blocks", {
     .notNull()
     .references(() => todos.id, { onDelete: "cascade" }),
   date: date("date").notNull(), // 'YYYY-MM-DD' (día concreto)
-  hour: integer("hour").notNull(), // 0-23, hora de inicio del bloque
-  duration: integer("duration").notNull().default(1), // horas que ocupa (>=1)
+  // Hora de inicio en horas fraccionarias (paso 0.5 → medias horas): 6.5 = 06:30.
+  // Rango 0–23.5.
+  hour: real("hour").notNull(),
+  // Horas que ocupa, también en pasos de 0.5 (>=0.5). hour + duration <= 24.
+  duration: real("duration").notNull().default(1),
   status: todoStatus("status").notNull().default("todo"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
