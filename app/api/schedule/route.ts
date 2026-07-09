@@ -8,6 +8,10 @@ export const runtime = "nodejs";
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+// Las horas y duraciones van en pasos de 0.5 (medias horas): 6.5 = 06:30.
+const isHalfStep = (n: unknown): n is number =>
+  typeof n === "number" && Number.isFinite(n) && Number.isInteger(n * 2);
+
 // Forma que consume el calendario: el bloque enriquecido con datos de la tarea.
 const blockShape = {
   id: scheduleBlocks.id,
@@ -57,15 +61,21 @@ export async function POST(request: NextRequest) {
   if (typeof date !== "string" || !DATE_RE.test(date)) {
     return Response.json({ error: "date inválida (YYYY-MM-DD)" }, { status: 400 });
   }
-  if (typeof hour !== "number" || !Number.isInteger(hour) || hour < 0 || hour > 23) {
-    return Response.json({ error: "hour inválida (0-23)" }, { status: 400 });
+  if (!isHalfStep(hour) || hour < 0 || hour > 23.5) {
+    return Response.json(
+      { error: "hour inválida (0-23.5, pasos de 0.5)" },
+      { status: 400 },
+    );
   }
 
   // duration opcional (default 1); el bloque no puede pasar de medianoche.
   let dur = 1;
   if (duration !== undefined) {
-    if (typeof duration !== "number" || !Number.isInteger(duration) || duration < 1) {
-      return Response.json({ error: "duration inválida (>=1)" }, { status: 400 });
+    if (!isHalfStep(duration) || duration < 0.5) {
+      return Response.json(
+        { error: "duration inválida (>=0.5, pasos de 0.5)" },
+        { status: 400 },
+      );
     }
     dur = duration;
   }
