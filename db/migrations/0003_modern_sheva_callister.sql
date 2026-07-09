@@ -1,0 +1,1 @@
+ALTER TABLE "schedule_blocks" ADD COLUMN "duration" integer DEFAULT 1 NOT NULL;

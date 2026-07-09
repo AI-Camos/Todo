@@ -15,6 +15,20 @@
       "when": 1783519361465,
       "tag": "0001_add_status_priority",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783525859156,
+      "tag": "0002_absurd_wendell_rand",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1783554527450,
+      "tag": "0003_modern_sheva_callister",
+      "breakpoints": true
     }
   ]
 }

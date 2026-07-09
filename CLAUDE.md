@@ -32,7 +32,10 @@ app/
   api/
     todos/route.ts         # CRUD de tareas (GET/POST) 
     todos/[id]/route.ts    # PATCH/DELETE de una tarea
+    schedule/route.ts      # calendario: GET por rango (?start&end) + POST bloque
+    schedule/[id]/route.ts # PATCH/DELETE de un bloque
     chat/route.ts          # endpoint del chat de IA (streaming)
+  semana/                  # UI del calendario semanal (time-blocking, cliente)
   chat/                    # UI del chat (componente cliente)
 lib/
   db/
@@ -143,15 +146,28 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   Migración `0001` (aplicada): `todos` pasó de `completed` (boolean) a un enum `status`
   (`todo_status`: todo/doing/paused/done) más un enum `priority` (`todo_priority`:
   low/medium/high, default medium). El backfill mapea `completed=true → done`.
+  Migración `0002` (aplicada): tabla `schedule_blocks` (time-blocking semanal estilo
+  Clockify) con `todo_id` (FK→todos, `ON DELETE CASCADE`), `date`, `hour` (0-23) y su
+  propio `status`. Verificado el borrado en cascada. Migración `0003` (aplicada): columna
+  `duration` (horas, default 1) para bloques multi-hora; la API valida `hour+duration<=24`.
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
   `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
-  y `priority` contra los enums; verificado end-to-end contra la BD). ⬜ Falta `/api/chat`
-  con streaming (requiere `ANTHROPIC_API_KEY`).
+  y `priority` contra los enums). Calendario ✅ (`app/api/schedule/route.ts` GET por rango
+  `?start&end` + POST, `app/api/schedule/[id]/route.ts` PATCH/DELETE; GET hace join con
+  `todos` para devolver `title`/`priority`). Verificado end-to-end contra la BD. ⬜ Falta
+  `/api/chat` con streaming (requiere `ANTHROPIC_API_KEY`).
 - 🔶 **Paso 4 — UI:** tablero Kanban ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
   cliente con `@dnd-kit`: 4 columnas por `status`, tarjetas arrastrables que cambian de
   estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
-  y eliminar; orden dentro de columna por prioridad y recencia; estados de carga/error).
-  Build de producción limpio. ⬜ Falta el panel de chat.
+  y eliminar; orden dentro de columna por prioridad y recencia). Calendario semanal ✅
+  (`app/semana/page.tsx` + `app/semana/week-calendar.tsx`: cuadrícula Lun–Dom × horas 6–23
+  con bloques posicionados en absoluto — ocupan varias filas según `duration` y se reparten
+  en carriles al solaparse; navegación de semana con fechas reales, clic en hueco → selector
+  de tarea con duración, clic en bloque → modal de estado/duración/quitar, y una barra de
+  "ahora" que recorre el tablero; updates optimistos). Navegación Tablero↔Semana. Dark mode
+  conmutable (`app/theme-toggle.tsx` +
+  `data-theme` en <html>, con script pre-render anti-flash; el `dark:` de Tailwind se
+  redefine por atributo en `globals.css`). Build de producción limpio. ⬜ Falta el chat.
 
 ## Cómo retomar (próxima sesión)
 
