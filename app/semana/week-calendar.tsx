@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { TASK_COLORS, resolveColor } from "@/lib/colors";
 
 type Status = "todo" | "doing" | "paused" | "done";
 type Priority = "low" | "medium" | "high";
@@ -10,38 +11,66 @@ type Todo = {
   title: string;
   status: Status;
   priority: Priority;
+  color: string | null;
   createdAt: string;
+};
+
+// Subtarea de una tarea: solo un título. Ver `subtasks` en lib/db/schema.ts.
+type Subtask = {
+  id: number;
+  todoId: number;
+  title: string;
 };
 
 type Block = {
   id: number;
   todoId: number;
+  // Subtarea concreta de este bloque (null = la tarea a secas). Es lo que
+  // permite partir el bloque de 8 h de "Trabajo" en 4 de 2 h sin que dejen de
+  // ser "Trabajo": mismo `todoId`, mismo color, distinta subtarea.
+  subtaskId: number | null;
+  subtaskTitle: string | null;
   date: string; // YYYY-MM-DD
   hour: number;
   duration: number; // horas que ocupa (>=1)
   status: Status;
   title: string;
   priority: Priority;
+  color: string | null; // clave de paleta de la TAREA (null = automático)
+};
+
+// Sombra de previsualización: dónde caería un bloque si soltases ahora mismo.
+// No existe en la BD — es el bloque con la fecha/hora de destino ya aplicadas.
+type Ghost = {
+  id: number; // id del bloque real que representa
+  todoId: number;
+  date: string;
+  hour: number;
+  duration: number;
+  title: string;
+  subtaskTitle: string | null;
+  color: string | null;
 };
 
 // Item del portapapeles: la tarea + su desfase (días/horas) respecto al ancla
 // del grupo copiado, para recolocar el grupo al pegar conservando su forma.
 type ClipItem = {
   todoId: number;
+  subtaskId: number | null;
   title: string;
   duration: number;
   dayOffset: number;
   hourOffset: number;
 };
 
-const START_HOUR = 6;
+const START_HOUR = 5;
 const END_HOUR = 23;
 const STEP = 0.5; // granularidad: media hora
 const HOURS = Array.from(
   { length: END_HOUR - START_HOUR + 1 },
   (_, i) => START_HOUR + i,
-); // 6..23 (para etiquetas y líneas de hora)
-// Ranuras de media hora para colocar/pegar: 6, 6.5, …, 23.5
+); // 5..23 (para etiquetas y líneas de hora)
+// Ranuras de media hora para colocar/pegar: 5, 5.5, …, 23.5
 const SLOTS = Array.from(
   { length: (END_HOUR - START_HOUR + 1) * 2 },
   (_, i) => START_HOUR + i * STEP,
@@ -87,6 +116,12 @@ const STATUS_UI: Record<
   },
 };
 
+// El color del bloque es el de la TAREA (elegido en el tablero), no el del
+// estado: con muchos bloques en la semana, todos del mismo gris eran
+// indistinguibles. El estado pasa a ser un punto dentro del bloque.
+const blockColor = (color: string | null, todoId: number) =>
+  TASK_COLORS[resolveColor(color, todoId)].block;
+
 const pad = (n: number) => String(n).padStart(2, "0");
 
 // Formatea una hora fraccionaria (6.5 → "06:30").
@@ -128,6 +163,30 @@ function daysBetween(a: string, b: string): number {
   return Math.round(ms / 86_400_000);
 }
 
+// Recorta el desfase de horas para que TODO el grupo quepa en el rango válido
+// (nadie por debajo de START_HOUR ni pasándose de medianoche). Es pura y vive
+// fuera del componente para poder usarla también al calcular la sombra de
+// destino: la sombra tiene que enseñar la MISMA hora en la que va a caer el
+// bloque, recorte incluido, o estaría mintiendo.
+function clampHourDelta(
+  group: { hour: number; duration: number }[],
+  hourDelta: number,
+): number {
+  let lo = -Infinity;
+  let hi = Infinity;
+  for (const b of group) {
+    lo = Math.max(lo, START_HOUR - b.hour); // no bajar de START_HOUR
+    hi = Math.min(hi, 24 - b.duration - b.hour); // no pasar de medianoche
+  }
+  return Math.max(lo, Math.min(hourDelta, hi));
+}
+
+// Hora (encajada a la media hora) que corresponde a la Y del cursor dentro de
+// una columna de día. La comparten el `dragOver` (sombra) y el `drop` (el
+// movimiento de verdad): si divergieran, la sombra enseñaría otra cosa.
+const hourFromY = (clientY: number, rect: DOMRect) =>
+  START_HOUR + Math.floor((clientY - rect.top) / HALF_H) * STEP;
+
 // Reparte los bloques de un día en carriles para que los solapes no se pisen.
 function layoutDay(dayBlocks: Block[]): { placed: { block: Block; lane: number }[]; lanes: number } {
   const sorted = [...dayBlocks].sort(
@@ -150,6 +209,7 @@ function layoutDay(dayBlocks: Block[]): { placed: { block: Block; lane: number }
 export default function WeekCalendar() {
   const [weekStart, setWeekStart] = useState<Date>(() => mondayOf(new Date()));
   const [todos, setTodos] = useState<Todo[]>([]);
+  const [subtasks, setSubtasks] = useState<Subtask[]>([]);
   const [blocks, setBlocks] = useState<Block[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -163,6 +223,14 @@ export default function WeekCalendar() {
   const [clipboard, setClipboard] = useState<ClipItem[] | null>(null);
   // Día resaltado mientras se arrastra un bloque.
   const [dragOverDay, setDragOverDay] = useState<string | null>(null);
+  // Destino bajo el cursor mientras se arrastra: dónde caería el bloque que se
+  // agarró. De aquí sale la sombra de previsualización.
+  const [dropAt, setDropAt] = useState<{ date: string; hour: number } | null>(
+    null,
+  );
+  // El bloque arrastrado va en estado (no solo en la ref) porque la sombra se
+  // calcula en render; una ref no dispararía el re-render.
+  const [draggingId, setDraggingId] = useState<number | null>(null);
   // Bloque que se está arrastrando y último hueco bajo el cursor (para Ctrl+V).
   const draggingRef = useRef<Block | null>(null);
   const hoverSlotRef = useRef<{ date: string; hour: number } | null>(null);
@@ -174,13 +242,19 @@ export default function WeekCalendar() {
   const todayISO = toISO(new Date());
   const weekHasToday = days.some((d) => toISO(d) === todayISO);
 
-  // Carga tareas una vez (para el selector).
+  // Carga tareas y subtareas una vez (para el selector y el modal).
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch("/api/todos");
-        if (!res.ok) throw new Error("No se pudieron cargar las tareas");
-        setTodos((await res.json()) as Todo[]);
+        const [tRes, sRes] = await Promise.all([
+          fetch("/api/todos"),
+          fetch("/api/subtasks"),
+        ]);
+        if (!tRes.ok || !sRes.ok) {
+          throw new Error("No se pudieron cargar las tareas");
+        }
+        setTodos((await tRes.json()) as Todo[]);
+        setSubtasks((await sRes.json()) as Subtask[]);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error desconocido");
       }
@@ -211,6 +285,17 @@ export default function WeekCalendar() {
     return () => clearInterval(id);
   }, []);
 
+  // Índice de subtareas por tarea (para el selector y el modal de bloque).
+  const subtasksByTodo = useMemo(() => {
+    const map = new Map<number, Subtask[]>();
+    for (const s of subtasks) {
+      const arr = map.get(s.todoId);
+      if (arr) arr.push(s);
+      else map.set(s.todoId, [s]);
+    }
+    return map;
+  }, [subtasks]);
+
   // Agrupa por fecha.
   const byDate = useMemo(() => {
     const map = new Map<string, Block[]>();
@@ -221,6 +306,58 @@ export default function WeekCalendar() {
     }
     return map;
   }, [blocks]);
+
+  // Sombra de destino: dónde quedaría cada bloque si soltases AHORA. Se calcula
+  // con la misma aritmética que `moveGroup` (mismo desfase para todo el grupo,
+  // mismo recorte) para que lo que se ve sea exactamente lo que va a pasar.
+  const ghostsByDate = useMemo(() => {
+    const map = new Map<string, Ghost[]>();
+    if (!dropAt || draggingId === null) return map;
+    const dragged = blocks.find((b) => b.id === draggingId);
+    if (!dragged) return map;
+
+    // Arrastrar un bloque de una selección múltiple mueve todo el grupo.
+    const group =
+      selectedIds.includes(dragged.id) && selectedIds.length > 1
+        ? blocks.filter((b) => selectedIds.includes(b.id))
+        : [dragged];
+
+    const dayDelta = daysBetween(dragged.date, dropAt.date);
+    const hourDelta = clampHourDelta(group, dropAt.hour - dragged.hour);
+
+    for (const b of group) {
+      const g: Ghost = {
+        id: b.id,
+        todoId: b.todoId,
+        date: isoAddDays(b.date, dayDelta),
+        hour: b.hour + hourDelta,
+        duration: b.duration,
+        title: b.title,
+        subtaskTitle: b.subtaskTitle,
+        color: b.color,
+      };
+      const arr = map.get(g.date);
+      if (arr) arr.push(g);
+      else map.set(g.date, [g]);
+    }
+    return map;
+  }, [dropAt, draggingId, blocks, selectedIds]);
+
+  // Ids que se están moviendo: sus bloques originales se atenúan para que se
+  // lea "esto sale de aquí y va allí" en vez de aparecer duplicado.
+  const movingIds = useMemo(() => {
+    const set = new Set<number>();
+    for (const gs of ghostsByDate.values()) for (const g of gs) set.add(g.id);
+    return set;
+  }, [ghostsByDate]);
+
+  // Limpia el estado de arrastre (se llama tanto al soltar como al cancelar).
+  function endDrag() {
+    draggingRef.current = null;
+    setDraggingId(null);
+    setDropAt(null);
+    setDragOverDay(null);
+  }
 
   // Posición de la barra de "ahora" (px desde el inicio del cuerpo).
   const nowInfo = useMemo(() => {
@@ -237,6 +374,7 @@ export default function WeekCalendar() {
     date: string,
     hour: number,
     duration: number,
+    subtaskId: number | null,
   ) {
     setPicker(null);
     setError(null);
@@ -244,7 +382,7 @@ export default function WeekCalendar() {
       const res = await fetch("/api/schedule", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ todoId, date, hour, duration }),
+        body: JSON.stringify({ todoId, date, hour, duration, subtaskId }),
       });
       if (!res.ok) throw new Error("No se pudo añadir el bloque");
       const created = (await res.json()) as Block;
@@ -254,8 +392,15 @@ export default function WeekCalendar() {
     }
   }
 
-  // Update optimista genérico de un bloque (status o duration).
-  async function patchBlock(block: Block, updates: Partial<Block>) {
+  // Update optimista genérico de un bloque (status, duration, subtarea…).
+  // `body` se separa de `updates` porque algunos campos son solo de pintado:
+  // `subtaskTitle` lo pinta la UI al instante, pero al servidor solo se le
+  // manda `subtaskId` (el título lo resuelve él al responder).
+  async function patchBlock(
+    block: Block,
+    updates: Partial<Block>,
+    body: Record<string, unknown> = updates,
+  ) {
     const prev = blocks;
     setBlocks((bs) => bs.map((b) => (b.id === block.id ? { ...b, ...updates } : b)));
     setError(null);
@@ -263,7 +408,7 @@ export default function WeekCalendar() {
       const res = await fetch(`/api/schedule/${block.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error("No se pudo actualizar el bloque");
       const updated = (await res.json()) as Block;
@@ -312,21 +457,6 @@ export default function WeekCalendar() {
       setBlocks(prev);
       setError("No se pudieron eliminar los bloques");
     }
-  }
-
-  // Recorta el desfase de horas para que TODO el grupo quepa en el rango válido
-  // (nadie por debajo de START_HOUR ni pasándose de medianoche).
-  function clampHourDelta(
-    group: { hour: number; duration: number }[],
-    hourDelta: number,
-  ): number {
-    let lo = -Infinity;
-    let hi = Infinity;
-    for (const b of group) {
-      lo = Math.max(lo, START_HOUR - b.hour); // no bajar de START_HOUR
-      hi = Math.min(hi, 24 - b.duration - b.hour); // no pasar de medianoche
-    }
-    return Math.max(lo, Math.min(hourDelta, hi));
   }
 
   // Mueve un grupo de bloques (drag & drop) conservando su forma: aplica el
@@ -381,6 +511,7 @@ export default function WeekCalendar() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               todoId: it.todoId,
+              subtaskId: it.subtaskId,
               date: isoAddDays(date, it.dayOffset),
               hour: baseHour + it.hourOffset,
               duration: it.duration,
@@ -408,7 +539,10 @@ export default function WeekCalendar() {
     setClipboard(
       sel.map((b) => ({
         todoId: b.todoId,
-        title: b.title,
+        subtaskId: b.subtaskId,
+        // Para la etiqueta del portapapeles: si el bloque tiene subtarea, es
+        // más útil ver «Trabajo · Revisar PRs» que solo «Trabajo».
+        title: b.subtaskTitle ? `${b.title} · ${b.subtaskTitle}` : b.title,
         duration: b.duration,
         dayOffset: daysBetween(anchor.date, b.date),
         hourOffset: b.hour - anchor.hour,
@@ -564,7 +698,17 @@ export default function WeekCalendar() {
                     if (!draggingRef.current) return;
                     e.preventDefault();
                     e.dataTransfer.dropEffect = "move";
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const hour = hourFromY(e.clientY, rect);
                     if (dragOverDay !== iso) setDragOverDay(iso);
+                    // `dragover` se dispara sin parar; como la hora está
+                    // encajada a la media, devolver el mismo objeto cuando el
+                    // destino no cambia evita un re-render por píxel movido.
+                    setDropAt((p) =>
+                      p && p.date === iso && p.hour === hour
+                        ? p
+                        : { date: iso, hour },
+                    );
                   }}
                   onDrop={(e) => {
                     const block = draggingRef.current;
@@ -572,9 +716,7 @@ export default function WeekCalendar() {
                     e.preventDefault();
                     const rect = e.currentTarget.getBoundingClientRect();
                     // Encaja a la media hora más cercana según la Y del cursor.
-                    const hour =
-                      START_HOUR +
-                      Math.floor((e.clientY - rect.top) / HALF_H) * STEP;
+                    const hour = hourFromY(e.clientY, rect);
                     // Si el bloque arrastrado es parte de una selección múltiple,
                     // mueve todo el grupo; si no, solo ese bloque.
                     const group =
@@ -582,8 +724,7 @@ export default function WeekCalendar() {
                         ? blocks.filter((b) => selectedIds.includes(b.id))
                         : [block];
                     moveGroup(group, daysBetween(block.date, iso), hour - block.hour);
-                    draggingRef.current = null;
-                    setDragOverDay(null);
+                    endDrag();
                   }}
                   className={`relative border-l border-zinc-200 dark:border-zinc-800 ${
                     isToday ? "bg-zinc-900/[0.02] dark:bg-white/[0.03]" : ""
@@ -636,13 +777,11 @@ export default function WeekCalendar() {
                             setSelectedIds([block.id]);
                           }
                           draggingRef.current = block;
+                          setDraggingId(block.id);
                           e.dataTransfer.effectAllowed = "move";
                           e.dataTransfer.setData("text/plain", String(block.id));
                         }}
-                        onDragEnd={() => {
-                          draggingRef.current = null;
-                          setDragOverDay(null);
-                        }}
+                        onDragEnd={endDrag}
                         onMouseEnter={() => {
                           hoverSlotRef.current = {
                             date: block.date,
@@ -663,24 +802,48 @@ export default function WeekCalendar() {
                             setStatusFor(block);
                           }
                         }}
-                        title={`${block.title} — ${ui.label} · ${fmtTime(block.hour)}–${fmtTime(block.hour + block.duration)}`}
+                        title={`${block.title}${block.subtaskTitle ? ` · ${block.subtaskTitle}` : ""} — ${ui.label} · ${fmtTime(block.hour)}–${fmtTime(block.hour + block.duration)}`}
                         style={{
                           top: top + 1,
                           height: height - 2,
                           left: `calc(${lane * w}% + 2px)`,
                           width: `calc(${w}% - 4px)`,
                         }}
-                        className={`absolute z-10 flex cursor-grab flex-col overflow-hidden rounded border-l-2 px-1.5 py-1 text-left text-xs transition-shadow hover:shadow-md active:cursor-grabbing ${ui.block} ${
+                        className={`absolute z-10 flex cursor-grab flex-col overflow-hidden rounded border-l-2 px-1.5 py-1 text-left text-xs transition-shadow hover:shadow-md active:cursor-grabbing ${blockColor(block.color, block.todoId)} ${
+                          // Mientras se arrastra, el original se atenúa: así se
+                          // lee "sale de aquí y va allí" en vez de verse el
+                          // bloque duplicado en dos sitios a la vez.
+                          movingIds.has(block.id)
+                            ? "opacity-25"
+                            : block.status === "done"
+                              ? "opacity-60"
+                              : ""
+                        } ${
                           selectedIds.includes(block.id)
                             ? "ring-2 ring-zinc-800 dark:ring-white"
                             : ""
                         }`}
                       >
-                        <span
-                          className={`truncate font-medium ${block.status === "done" ? "line-through" : ""}`}
-                        >
-                          {block.title}
+                        <span className="flex items-center gap-1">
+                          {/* El estado ya no tiñe el bloque (eso es el color de
+                              la tarea): se resume en este punto. */}
+                          <span
+                            className={`size-2.5 shrink-0 rounded-full ring-1 ring-white/80 dark:ring-black/40 ${ui.dot}`}
+                          />
+                          <span
+                            className={`truncate font-medium ${block.status === "done" ? "line-through" : ""}`}
+                          >
+                            {block.title}
+                          </span>
                         </span>
+                        {/* La subtarea va DEBAJO del título, no en su lugar: el
+                            bloque tiene que seguir leyéndose como "Trabajo".
+                            En bloques de media hora no cabe y se omite. */}
+                        {block.subtaskTitle && block.duration > 0.5 && (
+                          <span className="truncate pl-3.5 text-[10px] leading-tight opacity-75">
+                            {block.subtaskTitle}
+                          </span>
+                        )}
                         {block.duration > 1 && (
                           <span className="mt-auto text-[10px] tabular-nums opacity-70">
                             {fmtTime(block.hour)}–{fmtTime(block.hour + block.duration)}
@@ -689,6 +852,33 @@ export default function WeekCalendar() {
                       </button>
                     );
                   })}
+
+                  {/* Sombra de destino. `pointer-events-none` es obligatorio:
+                      si capturase eventos, se comería el `dragover` de la
+                      columna y el destino dejaría de actualizarse justo cuando
+                      el cursor pasa por encima de la propia sombra. */}
+                  {(ghostsByDate.get(iso) ?? []).map((g) => (
+                    <div
+                      key={g.id}
+                      style={{
+                        top: (g.hour - START_HOUR) * ROW_H + 1,
+                        height: g.duration * ROW_H - 2,
+                      }}
+                      className={`pointer-events-none absolute inset-x-0.5 z-20 flex flex-col overflow-hidden rounded border-2 border-dashed border-zinc-500 px-1.5 py-1 text-xs opacity-90 shadow-lg dark:border-white ${blockColor(g.color, g.todoId)}`}
+                    >
+                      <span className="truncate font-medium">{g.title}</span>
+                      {g.subtaskTitle && g.duration > 0.5 && (
+                        <span className="truncate text-[10px] leading-tight opacity-75">
+                          {g.subtaskTitle}
+                        </span>
+                      )}
+                      {/* La hora de destino es LO QUE SE VIENE A VER: se pinta
+                          siempre, incluso en bloques de 30 min. */}
+                      <span className="mt-auto truncate text-[10px] font-semibold tabular-nums">
+                        {fmtTime(g.hour)}–{fmtTime(g.hour + g.duration)}
+                      </span>
+                    </div>
+                  ))}
                 </div>
               );
             })}
@@ -713,10 +903,11 @@ export default function WeekCalendar() {
       {picker && (
         <TaskPicker
           todos={todos}
+          subtasksByTodo={subtasksByTodo}
           date={picker.date}
           hour={picker.hour}
-          onPick={(todoId, duration) =>
-            addBlock(todoId, picker.date, picker.hour, duration)
+          onPick={(todoId, duration, subtaskId) =>
+            addBlock(todoId, picker.date, picker.hour, duration, subtaskId)
           }
           onClose={() => setPicker(null)}
         />
@@ -725,6 +916,17 @@ export default function WeekCalendar() {
       {statusFor && (
         <StatusModal
           block={statusFor}
+          subtasks={subtasksByTodo.get(statusFor.todoId) ?? []}
+          onSubtask={(subtaskId) => {
+            // El título viaja junto al id para que el update optimista no deje
+            // el bloque con la subtarea anterior escrita hasta que responda.
+            const subtaskTitle =
+              subtasks.find((s) => s.id === subtaskId)?.title ?? null;
+            if (subtaskId !== statusFor.subtaskId) {
+              patchBlock(statusFor, { subtaskId, subtaskTitle }, { subtaskId });
+            }
+            setStatusFor((s) => (s ? { ...s, subtaskId, subtaskTitle } : s));
+          }}
           onStatus={(status) => {
             setStatusFor(null);
             if (status !== statusFor.status) patchBlock(statusFor, { status });
@@ -802,12 +1004,16 @@ const PRIORITY_DOT: Record<Priority, string> = {
 // Modal para cambiar estado y duración de un bloque (estilo Clockify).
 function StatusModal({
   block,
+  subtasks,
+  onSubtask,
   onStatus,
   onDuration,
   onRemove,
   onClose,
 }: {
   block: Block;
+  subtasks: Subtask[];
+  onSubtask: (subtaskId: number | null) => void;
   onStatus: (status: Status) => void;
   onDuration: (duration: number) => void;
   onRemove: () => void;
@@ -841,6 +1047,29 @@ function StatusModal({
         <p className="mb-3 text-xs text-zinc-500">
           {block.date} · {fmtTime(block.hour)}–{fmtTime(block.hour + block.duration)}
         </p>
+
+        {/* El selector solo aparece si la tarea tiene subtareas: en una tarea
+            suelta sería un desplegable con una única opción vacía. Las
+            subtareas se crean en el tablero, no aquí. */}
+        {subtasks.length > 0 && (
+          <label className="mb-3 flex items-center justify-between gap-2 text-sm">
+            <span className="text-xs font-medium text-zinc-500">Subtarea</span>
+            <select
+              value={block.subtaskId ?? ""}
+              onChange={(e) =>
+                onSubtask(e.target.value === "" ? null : Number(e.target.value))
+              }
+              className="min-w-0 flex-1 rounded-lg border border-zinc-300 bg-white px-2 py-1 text-sm outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-800"
+            >
+              <option value="">— sin subtarea —</option>
+              {subtasks.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.title}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <p className="mb-1 text-xs font-medium text-zinc-500">Estado</p>
         <div className="mb-3 flex flex-col gap-1">
@@ -896,15 +1125,17 @@ function StatusModal({
 
 function TaskPicker({
   todos,
+  subtasksByTodo,
   date,
   hour,
   onPick,
   onClose,
 }: {
   todos: Todo[];
+  subtasksByTodo: Map<number, Subtask[]>;
   date: string;
   hour: number;
-  onPick: (todoId: number, duration: number) => void;
+  onPick: (todoId: number, duration: number, subtaskId: number | null) => void;
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
@@ -922,9 +1153,22 @@ function TaskPicker({
     { length: Math.round((24 - hour) / STEP) },
     (_, i) => (i + 1) * STEP,
   );
-  const filtered = todos.filter((t) =>
-    t.title.toLowerCase().includes(q.trim().toLowerCase()),
-  );
+  // El buscador mira también las subtareas: escribir "PRs" tiene que encontrar
+  // «Trabajo → Revisar PRs» aunque la tarea no se llame así. Si el que casa es
+  // el título de la tarea, se listan todas sus subtareas; si casa una subtarea,
+  // se listan solo las que casan.
+  const needle = q.trim().toLowerCase();
+  const filtered = todos
+    .map((t) => {
+      const subs = subtasksByTodo.get(t.id) ?? [];
+      if (!needle) return { todo: t, subs };
+      const hitTodo = t.title.toLowerCase().includes(needle);
+      const hitSubs = subs.filter((s) => s.title.toLowerCase().includes(needle));
+      if (hitTodo) return { todo: t, subs };
+      if (hitSubs.length > 0) return { todo: t, subs: hitSubs };
+      return null;
+    })
+    .filter((x): x is { todo: Todo; subs: Subtask[] } => x !== null);
 
   return (
     <div
@@ -976,17 +1220,42 @@ function TaskPicker({
             </p>
           ) : (
             <ul className="flex flex-col">
-              {filtered.map((t) => (
+              {filtered.map(({ todo: t, subs }) => (
                 <li key={t.id}>
+                  {/* La tarea a secas: bloque sin subtarea. */}
                   <button
-                    onClick={() => onPick(t.id, duration)}
+                    onClick={() => onPick(t.id, duration, null)}
                     className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
                   >
+                    {/* Muestra del color de la tarea: así reconoces en el
+                        selector el mismo color que verás en la cuadrícula. */}
+                    <span
+                      className={`h-4 w-1.5 shrink-0 rounded-full ${TASK_COLORS[resolveColor(t.color, t.id)].swatch}`}
+                    />
                     <span className={`size-2 shrink-0 rounded-full ${PRIORITY_DOT[t.priority]}`} />
                     <span className="truncate text-zinc-800 dark:text-zinc-100">
                       {t.title}
                     </span>
                   </button>
+
+                  {/* Sus subtareas, indentadas: elegir una agenda la MISMA
+                      tarea pero etiquetada con ese detalle. Un clic, sin
+                      segundo paso. */}
+                  {subs.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => onPick(t.id, duration, s.id)}
+                      className="flex w-full items-center gap-2 rounded-lg py-1.5 pl-6 pr-2 text-left text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      <span
+                        className={`h-3 w-1 shrink-0 rounded-full opacity-60 ${TASK_COLORS[resolveColor(t.color, t.id)].swatch}`}
+                      />
+                      <span className="text-zinc-300 dark:text-zinc-600">↳</span>
+                      <span className="truncate text-zinc-600 dark:text-zinc-300">
+                        {s.title}
+                      </span>
+                    </button>
+                  ))}
                 </li>
               ))}
             </ul>
