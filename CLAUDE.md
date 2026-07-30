@@ -23,7 +23,7 @@ Separar daría dos deploys y dos CI sin beneficio para una app personal. Un repo
 en Docker). Cualquiera puede clonarlo y usarlo con su propia `ANTHROPIC_API_KEY`. Razón:
 una instancia pública con la clave del autor necesita tope de gasto, rate limiting por IP y
 un Postgres gestionado — coste y trabajo sin retorno para una app de un solo usuario. Si
-hace falta enseñarlo, se graba una demo. Esto **no** es un pendiente: es una decisión.
+hace falta enseñarlo, se graba una demo. Esto **no** es un pendiente: es una decisión..
 
 ## Stack
 
