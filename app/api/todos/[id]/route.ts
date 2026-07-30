@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { todos, todoStatus, todoPriority } from "@/lib/db/schema";
 import type { TodoStatus, TodoPriority } from "@/lib/db/schema";
+import { isTaskColor, type TaskColor } from "@/lib/colors";
 
 export const runtime = "nodejs";
 
@@ -28,12 +29,13 @@ export async function PATCH(request: NextRequest, { params }: Context) {
   if (!body || typeof body !== "object") {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const { title, status, priority } = body as Record<string, unknown>;
+  const { title, status, priority, color } = body as Record<string, unknown>;
 
   const updates: Partial<{
     title: string;
     status: TodoStatus;
     priority: TodoPriority;
+    color: TaskColor | null;
   }> = {};
   if (typeof title === "string") {
     const trimmed = title.trim();
@@ -57,9 +59,16 @@ export async function PATCH(request: NextRequest, { params }: Context) {
     }
     updates.priority = priority as TodoPriority;
   }
+  // `color: null` es una actualización válida: vuelve al color automático.
+  if (color !== undefined) {
+    if (color !== null && !isTaskColor(color)) {
+      return Response.json({ error: "color inválido" }, { status: 400 });
+    }
+    updates.color = color as TaskColor | null;
+  }
   if (Object.keys(updates).length === 0) {
     return Response.json(
-      { error: "Nada que actualizar (envía title, status o priority)" },
+      { error: "Nada que actualizar (envía title, status, priority o color)" },
       { status: 400 },
     );
   }

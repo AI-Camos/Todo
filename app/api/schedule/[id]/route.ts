@@ -1,8 +1,9 @@
 import type { NextRequest } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { scheduleBlocks, todoStatus } from "@/lib/db/schema";
+import { scheduleBlocks, subtasks, todoStatus } from "@/lib/db/schema";
 import type { TodoStatus } from "@/lib/db/schema";
+import { findBlock } from "@/lib/db/blocks";
 
 export const runtime = "nodejs";
 
@@ -31,13 +32,17 @@ export async function PATCH(request: NextRequest, { params }: Context) {
   if (!body || typeof body !== "object") {
     return Response.json({ error: "JSON inválido" }, { status: 400 });
   }
-  const { status, date, hour, duration } = body as Record<string, unknown>;
+  const { status, date, hour, duration, subtaskId } = body as Record<
+    string,
+    unknown
+  >;
 
   const updates: Partial<{
     status: TodoStatus;
     date: string;
     hour: number;
     duration: number;
+    subtaskId: number | null;
   }> = {};
   if (status !== undefined) {
     if (typeof status !== "string" || !STATUSES.includes(status)) {
@@ -69,9 +74,26 @@ export async function PATCH(request: NextRequest, { params }: Context) {
     }
     updates.duration = duration;
   }
+  // `subtaskId: null` es una actualización válida: quita la subtarea del bloque
+  // y lo deja como la tarea a secas. La comprobación de que la subtarea sea de
+  // ESTA tarea va más abajo, cuando ya sabemos a qué tarea pertenece el bloque.
+  if (subtaskId !== undefined) {
+    if (
+      subtaskId !== null &&
+      (typeof subtaskId !== "number" ||
+        !Number.isInteger(subtaskId) ||
+        subtaskId <= 0)
+    ) {
+      return Response.json({ error: "subtaskId inválido" }, { status: 400 });
+    }
+    updates.subtaskId = subtaskId as number | null;
+  }
   if (Object.keys(updates).length === 0) {
     return Response.json(
-      { error: "Nada que actualizar (envía status, date, hour o duration)" },
+      {
+        error:
+          "Nada que actualizar (envía status, date, hour, duration o subtaskId)",
+      },
       { status: 400 },
     );
   }
@@ -94,13 +116,25 @@ export async function PATCH(request: NextRequest, { params }: Context) {
     );
   }
 
-  const [updated] = await db
-    .update(scheduleBlocks)
-    .set(updates)
-    .where(eq(scheduleBlocks.id, id))
-    .returning();
+  // La subtarea tiene que ser de la tarea del bloque (el FK no lo comprueba).
+  if (updates.subtaskId != null) {
+    const [row] = await db
+      .select()
+      .from(subtasks)
+      .where(eq(subtasks.id, updates.subtaskId));
+    if (!row || row.todoId !== current.todoId) {
+      return Response.json(
+        { error: "La subtarea no existe o no pertenece a esa tarea" },
+        { status: 400 },
+      );
+    }
+  }
 
-  return Response.json(updated);
+  await db.update(scheduleBlocks).set(updates).where(eq(scheduleBlocks.id, id));
+
+  // Devolvemos el bloque enriquecido (con `subtaskTitle`) para que la UI pueda
+  // fusionar la respuesta tal cual: la fila cruda dejaría el título anterior.
+  return Response.json(await findBlock(id));
 }
 
 // DELETE /api/schedule/:id — quita el bloque del calendario.

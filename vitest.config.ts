@@ -8,6 +8,9 @@ export default defineConfig({
     environment: "node",
     // Descubre archivos *.test.ts en todo el repo.
     include: ["**/*.test.ts", "**/*.test.tsx"],
+    // Carga .env.local antes de importar los módulos de test, para que
+    // DATABASE_URL exista cuando lib/db construye el Pool de Postgres.
+    setupFiles: ["./vitest.setup.ts"],
   },
   resolve: {
     // Replica el alias "@/*" -> raíz del proyecto que usa Next (tsconfig.json).
