@@ -75,6 +75,36 @@ export const scheduleBlocks = pgTable("schedule_blocks", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+// Días modelo («día con reuniones», «fin de semana»…): plantillas de horario
+// que NO pertenecen a ninguna fecha. Se diseñan aparte y se aplican sobre un
+// día concreto del calendario cuando toca (copia, no enlace: editar la
+// plantilla después no cambia los días ya aplicados).
+export const dayTemplates = pgTable("day_templates", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Bloques de una plantilla. Mismo modelo que `schedule_blocks` pero sin `date`
+// (la plantilla es un día abstracto) y sin `status` (el estado es de la
+// ejecución, no del plan: al aplicar, los bloques nacen como "todo").
+export const templateBlocks = pgTable("template_blocks", {
+  id: serial("id").primaryKey(),
+  templateId: integer("template_id")
+    .notNull()
+    .references(() => dayTemplates.id, { onDelete: "cascade" }),
+  todoId: integer("todo_id")
+    .notNull()
+    .references(() => todos.id, { onDelete: "cascade" }),
+  // Igual que en schedule_blocks: borrar la subtarea no borra el bloque.
+  subtaskId: integer("subtask_id").references(() => subtasks.id, {
+    onDelete: "set null",
+  }),
+  hour: real("hour").notNull(),
+  duration: real("duration").notNull().default(1),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 // Historial del chat. Por ahora una sola conversación global; si más adelante
 // quieres múltiples hilos, se añade una tabla `conversations` y un FK aquí.
 export const chatMessages = pgTable("chat_messages", {
@@ -95,3 +125,5 @@ export type ScheduleBlock = typeof scheduleBlocks.$inferSelect;
 export type NewScheduleBlock = typeof scheduleBlocks.$inferInsert;
 export type ChatMessage = typeof chatMessages.$inferSelect;
 export type NewChatMessage = typeof chatMessages.$inferInsert;
+export type DayTemplate = typeof dayTemplates.$inferSelect;
+export type TemplateBlock = typeof templateBlocks.$inferSelect;

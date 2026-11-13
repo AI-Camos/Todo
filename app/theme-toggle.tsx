@@ -1,17 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 
 type Theme = "light" | "dark";
 
-export default function ThemeToggle() {
-  const [theme, setTheme] = useState<Theme>("light");
+// La fuente de verdad es data-theme en <html> (lo fija el script pre-render);
+// nos suscribimos a sus cambios en vez de copiarlo a un estado de React.
+function subscribe(onChange: () => void) {
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, { attributeFilter: ["data-theme"] });
+  return () => observer.disconnect();
+}
 
-  // El script pre-render ya fijó data-theme; aquí solo lo leemos para el icono.
-  useEffect(() => {
-    const t = document.documentElement.dataset.theme;
-    setTheme(t === "dark" ? "dark" : "light");
-  }, []);
+const getTheme = (): Theme =>
+  document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+
+export default function ThemeToggle() {
+  const theme = useSyncExternalStore(subscribe, getTheme, (): Theme => "light");
 
   function toggle() {
     const next: Theme = theme === "dark" ? "light" : "dark";
@@ -19,7 +24,6 @@ export default function ThemeToggle() {
     try {
       localStorage.setItem("theme", next);
     } catch {}
-    setTheme(next);
   }
 
   return (

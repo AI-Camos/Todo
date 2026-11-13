@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { scheduleBlocks, subtasks, todos } from "@/lib/db/schema";
+import {
+  scheduleBlocks,
+  subtasks,
+  templateBlocks,
+  todos,
+} from "@/lib/db/schema";
 
 // Forma que consume el calendario: el bloque enriquecido con datos de la tarea
 // y de su subtarea. Vive aquí y no en un `route.ts` porque los route handlers
@@ -32,5 +37,31 @@ export const blockQuery = () =>
 // respuesta tenga la misma forma que el GET y la UI pueda fusionarla directa.
 export async function findBlock(id: number) {
   const [row] = await blockQuery().where(eq(scheduleBlocks.id, id));
+  return row ?? null;
+}
+
+// Lo mismo para los bloques de los días modelo (sin fecha ni estado).
+export const templateBlockShape = {
+  id: templateBlocks.id,
+  templateId: templateBlocks.templateId,
+  todoId: templateBlocks.todoId,
+  subtaskId: templateBlocks.subtaskId,
+  hour: templateBlocks.hour,
+  duration: templateBlocks.duration,
+  title: todos.title,
+  priority: todos.priority,
+  color: todos.color,
+  subtaskTitle: subtasks.title,
+};
+
+export const templateBlockQuery = () =>
+  db
+    .select(templateBlockShape)
+    .from(templateBlocks)
+    .innerJoin(todos, eq(templateBlocks.todoId, todos.id))
+    .leftJoin(subtasks, eq(templateBlocks.subtaskId, subtasks.id));
+
+export async function findTemplateBlock(id: number) {
+  const [row] = await templateBlockQuery().where(eq(templateBlocks.id, id));
   return row ?? null;
 }
