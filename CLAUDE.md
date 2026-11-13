@@ -51,15 +51,22 @@ app/
     subtasks/[id]/route.ts # PATCH (renombrar) / DELETE de una subtarea
     schedule/route.ts      # calendario: GET por rango (?start&end) + POST bloque
     schedule/[id]/route.ts # PATCH/DELETE de un bloque
+    day-templates/         # días modelo: GET/POST (+fromDate), [id] PATCH/DELETE,
+                           #   [id]/apply POST (copia a una fecha: merge|replace)
+    template-blocks/       # bloques de los días modelo: GET/POST, [id] PATCH/DELETE
     chat/route.ts          # endpoint del agente (streaming + tool use)
     plan/route.ts          # planificador semanal (propone bloques, no los aplica)
-  semana/                  # UI del calendario semanal (time-blocking, cliente)
+  time-grid.tsx            # cuadrícula horaria GENÉRICA (columnas = fechas o plantillas)
+  template-dialog.tsx      # aplicar día modelo a una fecha / guardar día como modelo
+  semana/                  # calendario semanal: TimeGrid con una columna por fecha
+  plantillas/              # días modelo: TimeGrid con una columna por plantilla
   chat/                    # UI del chat (componente cliente)
   observabilidad/          # dashboard de coste/latencia/errores + trazas
 lib/
   db/
     index.ts               # cliente Drizzle + pool de Postgres
-    schema.ts              # tablas: todos, subtasks, chat_messages, schedule_blocks, llm_calls
+    schema.ts              # tablas: todos, subtasks, schedule_blocks, day_templates,
+                           #   template_blocks, chat_messages, llm_calls
     blocks.ts              # select compartido del bloque enriquecido (tarea + subtarea)
   anthropic.ts             # cliente Anthropic compartido
   agent/
@@ -273,6 +280,29 @@ Decisiones, para no rediscutirlas:
 - Cuando llegue el agente, `crear_tarea`/`agendar_bloque` deberían aceptar subtarea, y hará
   falta una tool para listarlas. No está hecho.
 
+## Días modelo (`/plantillas`)
+
+Plantillas de horario que **no pertenecen a ninguna fecha** («Día con reuniones», «Día sin
+reuniones», «Fin de semana»…). Existen porque el día se planifica esa misma mañana, no el
+domingo para toda la semana, pero los días se parecen mucho entre sí.
+
+- **Misma cuadrícula, otra columna.** `app/time-grid.tsx` es la cuadrícula genérica: una
+  columna es una fecha (Semana) o una plantilla (Días modelo). Arrastrar, sombra, copiar/
+  pegar, selección múltiple y subtareas son el MISMO código. La vista solo aporta
+  `columns`, el endpoint, `colField` (`date` | `templateId`) y `shiftCol`/`colDelta`. Para
+  fechas, desplazar nunca se sale (pegar cruzando el domingo crea en la semana siguiente);
+  para plantillas, más allá de la última es `null` y ese bloque no se mueve/pega.
+- **Aplicar = copiar, no enlazar.** `POST /api/day-templates/:id/apply {date, mode}` copia
+  los bloques al día. Editar o borrar la plantilla después no toca días ya aplicados.
+  `merge` (por defecto) añade; `replace` vacía el día primero. En una transacción: un
+  `replace` a medias dejaría el día vacío.
+- **`template_blocks` no tiene `status`.** El estado es de la ejecución, no del plan; al
+  aplicar, los bloques nacen como `todo`. Mismas reglas que `schedule_blocks` (paso 0.5,
+  `hour+duration<=24`, subtarea de esa tarea, `subtask_id ON DELETE SET NULL`).
+- Se aplica desde los dos lados: «Aplicar a…» en la cabecera de la plantilla, o el botón
+  ⧉ en la cabecera de cada día de la Semana, que además permite **guardar ese día como
+  plantilla** (`POST /api/day-templates {name, fromDate}`).
+
 ## El harness de evaluación (`evals/`)
 
 **Qué es y por qué existe.** Un system prompt o una descripción de tool son código sin
@@ -420,6 +450,8 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   Migración `0006` (aplicada): tabla `subtasks` (`todo_id` FK→todos `ON DELETE CASCADE`,
   `title`) + columna `subtask_id` (nullable, FK→subtasks **`ON DELETE SET NULL`**) en
   `schedule_blocks`. Ver "Subtareas" abajo para el porqué del `SET NULL`.
+  Migración `0007` (aplicada): `day_templates` + `template_blocks` (días modelo; ver
+  "Días modelo").
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
   `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
   y `priority` contra los enums). Subtareas ✅ (`app/api/subtasks/route.ts` GET
@@ -431,7 +463,8 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   que el FK no garantiza; PATCH devuelve el bloque enriquecido, no la fila cruda, para que
   la UI pueda fusionar la respuesta). Verificado end-to-end contra la BD. ⬜ Falta
   `/api/chat` (agente con tool use + streaming; requiere `ANTHROPIC_API_KEY`) y `/api/plan`.
-  ⬜ Falta la migración `0007`: tabla `llm_calls` (ver "Observabilidad").
+  Días modelo ✅ (`app/api/day-templates/…`, `app/api/template-blocks/…`). ⬜ Falta la
+  migración `0008`: tabla `llm_calls` (ver "Observabilidad").
 - 🔶 **Paso 4 — UI:** tablero Kanban ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
   cliente con `@dnd-kit`: 4 columnas por `status`, tarjetas arrastrables que cambian de
   estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
@@ -468,9 +501,18 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   selectores de duración van en pasos de 0.5 con etiquetas tipo "30 min" / "1 h 30 min"
   (`fmtTime`/`fmtDuration`). **Subtareas en el calendario:** el selector de tarea lista las
   subtareas indentadas bajo su tarea (un clic agenda la tarea con esa subtarea; el buscador
-  también busca por subtarea), el bloque pinta la subtarea bajo el título (se omite en
-  bloques de 30 min por espacio), el modal del bloque tiene un desplegable
-  «— sin subtarea —» y copiar/pegar conserva la subtarea. Navegación Tablero↔Semana. Dark mode
+  también busca por subtarea), el bloque pinta la subtarea bajo el título, el modal del
+  bloque tiene un desplegable
+  «— sin subtarea —» y copiar/pegar conserva la subtarea. **Bloques de 30 min:** miden 22 px
+  útiles, así que no cabe una segunda línea — título y subtarea comparten fila separados por
+  un punto medio, con `py-0` + `justify-center` para recuperar el alto que se comía el
+  padding. La subtarea lleva `shrink-[3]` para encogerse antes que el título: el bloque tiene
+  que seguir leyéndose como «Trabajo» aunque se corte el detalle. La sombra de arrastre hace
+  lo mismo, pero poniendo la hora **primera**: arrastrando es el dato que se viene a mirar.
+  Navegación Tablero↔Semana↔Días modelo (`app/nav.tsx`). **Días modelo** ✅
+  (`app/plantillas/`: una columna por plantilla, crear/renombrar/borrar en la cabecera,
+  «Aplicar a…» una fecha; en la Semana, ⧉ por día para aplicar o guardar como modelo).
+  Dark mode
   conmutable (`app/theme-toggle.tsx` +
   `data-theme` en <html>, con script pre-render anti-flash; el `dark:` de Tailwind se
   redefine por atributo en `globals.css`). Build de producción limpio. ⬜ Falta el chat, el
@@ -494,7 +536,7 @@ itera el prompt, y sin evals se itera a ciegas):
    explique esta parte a fondo mientras se construye, no solo que funcione.
 4. **Planificador** (`/api/plan`) — structured outputs + ciclo validar-y-reintentar contra
    la BD. Decidir el modelo con las evals y escribir la decisión aquí.
-5. **Observabilidad** — migración `0007` (`llm_calls`), `lib/agent/telemetry.ts`, y
+5. **Observabilidad** — migración `0008` (`llm_calls`), `lib/agent/telemetry.ts`, y
    `/observabilidad` con la vista de trazas por turno (la de coste es secundaria).
 
 Al implementar: verificar la API exacta del SDK contra `node_modules/@anthropic-ai/sdk`
