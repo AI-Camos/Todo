@@ -11,7 +11,7 @@ import { TASK_COLORS, resolveColor } from "@/lib/colors";
 // Todo lo demás (arrastrar, sombra de destino, copiar/pegar, selección
 // múltiple, subtareas, medias horas) se comparte para que no diverjan.
 
-type Status = "todo" | "doing" | "paused" | "pending" | "done";
+type Status = "todo" | "doing" | "paused" | "this_week" | "done";
 type Priority = "low" | "medium" | "high";
 
 type Todo = {
@@ -117,7 +117,10 @@ const ROW_H = 48; // px por hora
 const HALF_H = ROW_H * STEP; // px por media hora
 const BODY_H = HOURS.length * ROW_H;
 
-const STATUSES: Status[] = ["todo", "doing", "paused", "pending", "done"];
+// Estados elegibles para un BLOQUE. `this_week` existe en el enum compartido
+// pero no se ofrece: «Esta semana» es una selección de tareas en el tablero, y
+// un bloque ya está colocado en un día concreto.
+const STATUSES: Status[] = ["todo", "doing", "paused", "done"];
 
 const STATUS_UI: Record<
   Status,
@@ -141,8 +144,10 @@ const STATUS_UI: Record<
     block:
       "border-l-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-100",
   },
-  pending: {
-    label: "Pendiente",
+  // Solo para pintar un bloque que llegase con este estado (el tipo lo exige);
+  // no se puede elegir en el modal, ver STATUSES.
+  this_week: {
+    label: "Esta semana",
     dot: "bg-violet-500",
     block:
       "border-l-violet-500 bg-violet-50 text-violet-800 dark:bg-violet-950/60 dark:text-violet-100",
@@ -1289,7 +1294,26 @@ function TaskPicker({
       if (hitSubs.length > 0) return { todo: t, subs: hitSubs };
       return null;
     })
-    .filter((x): x is { todo: Todo; subs: Subtask[] } => x !== null);
+    .filter((x): x is { todo: Todo; subs: Subtask[] } => x !== null)
+    // Las de «Esta semana» van primero: es lo que decidiste en el tablero, y
+    // aquí es donde lo colocas. `sort` es estable, así que dentro de cada
+    // grupo se conserva el orden de la API.
+    .sort(
+      (a, b) =>
+        Number(b.todo.status === "this_week") -
+        Number(a.todo.status === "this_week"),
+    );
+  const weekCount = filtered.filter((x) => x.todo.status === "this_week").length;
+  // Los encabezados solo aparecen si hay algo en «Esta semana»; si no, la
+  // lista se ve como siempre.
+  const sectionTitle = (i: number) =>
+    weekCount === 0
+      ? null
+      : i === 0
+        ? "Esta semana"
+        : i === weekCount
+          ? "Resto"
+          : null;
 
   return (
     <div
@@ -1341,8 +1365,13 @@ function TaskPicker({
             </p>
           ) : (
             <ul className="flex flex-col">
-              {filtered.map(({ todo: t, subs }) => (
+              {filtered.map(({ todo: t, subs }, i) => (
                 <li key={t.id}>
+                  {sectionTitle(i) && (
+                    <p className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                      {sectionTitle(i)}
+                    </p>
+                  )}
                   {/* La tarea a secas: bloque sin subtarea. */}
                   <button
                     onClick={() => onPick(t.id, duration, null)}

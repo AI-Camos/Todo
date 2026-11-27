@@ -20,7 +20,7 @@ import {
   type TaskColor,
 } from "@/lib/colors";
 
-type Status = "todo" | "doing" | "paused" | "pending" | "done";
+type Status = "todo" | "doing" | "paused" | "this_week" | "done";
 type Priority = "low" | "medium" | "high";
 
 type Todo = {
@@ -42,11 +42,20 @@ type Subtask = {
   createdAt: string;
 };
 
-const COLUMNS: { status: Status; label: string; accent: string }[] = [
-  { status: "todo", label: "Por hacer", accent: "bg-zinc-400" },
+// El tablero se lee como un embudo: Bandeja → Esta semana → En progreso → Hecho.
+// El orden de pantalla es el de este array (no el del enum de la BD).
+const COLUMNS: {
+  status: Status;
+  label: string;
+  accent: string;
+  // Tope orientativo: si todo entra en «Esta semana», la columna deja de decir
+  // qué priorizas. No impide soltar más; solo avisa.
+  limit?: number;
+}[] = [
+  { status: "todo", label: "Bandeja", accent: "bg-zinc-400" },
+  { status: "this_week", label: "Esta semana", accent: "bg-violet-500", limit: 5 },
   { status: "doing", label: "En progreso", accent: "bg-blue-500" },
   { status: "paused", label: "En pausa", accent: "bg-amber-500" },
-  { status: "pending", label: "Pendiente", accent: "bg-violet-500" },
   { status: "done", label: "Hecho", accent: "bg-emerald-500" },
 ];
 
@@ -238,9 +247,9 @@ export default function TodoList() {
   const byStatus = useMemo(() => {
     const groups: Record<Status, Todo[]> = {
       todo: [],
+      this_week: [],
       doing: [],
       paused: [],
-      pending: [],
       done: [],
     };
     for (const t of todos) groups[t.status].push(t);
@@ -319,6 +328,7 @@ export default function TodoList() {
                 status={col.status}
                 label={col.label}
                 accent={col.accent}
+                limit={col.limit}
                 todos={byStatus[col.status]}
                 subtasksByTodo={subtasksByTodo}
                 onAddSubtask={addSubtask}
@@ -357,6 +367,7 @@ function Column({
   status,
   label,
   accent,
+  limit,
   todos,
   subtasksByTodo,
   onAddSubtask,
@@ -376,6 +387,7 @@ function Column({
   status: Status;
   label: string;
   accent: string;
+  limit?: number;
   todos: Todo[];
   subtasksByTodo: Map<number, Subtask[]>;
   onAddSubtask: (todoId: number, title: string) => void;
@@ -408,8 +420,21 @@ function Column({
         <h2 className="text-sm font-medium text-zinc-700 dark:text-zinc-200">
           {label}
         </h2>
-        <span className="ml-auto text-xs tabular-nums text-zinc-400">
+        {/* Con tope se pinta «n / tope», en rojo al pasarse. */}
+        <span
+          title={
+            limit !== undefined && todos.length > limit
+              ? `Te has pasado del tope de ${limit}: ¿qué no toca esta semana?`
+              : undefined
+          }
+          className={`ml-auto text-xs tabular-nums ${
+            limit !== undefined && todos.length > limit
+              ? "font-semibold text-red-500"
+              : "text-zinc-400"
+          }`}
+        >
           {todos.length}
+          {limit !== undefined && ` / ${limit}`}
         </span>
       </header>
 
