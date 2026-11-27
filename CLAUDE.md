@@ -106,7 +106,7 @@ npm run dev                # http://localhost:3000
 ## Variables de entorno (`.env.local`)
 
 ```
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/todo
+DATABASE_URL=postgres://postgres:postgres@localhost:5433/todo
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
