@@ -303,15 +303,25 @@ domingo para toda la semana, pero los días se parecen mucho entre sí.
   ⧉ en la cabecera de cada día de la Semana, que además permite **guardar ese día como
   plantilla** (`POST /api/day-templates {name, fromDate}`).
 
-## «Esta semana» (tablero → calendario)
+## «Fijas» y «Esta semana» (tablero → calendario)
 
-«Esta semana» no es un estado de avance sino una **selección**: de la Bandeja eliges lo que
-priorizas estos 7 días, y eso es lo que colocas en el calendario. Por eso:
+Ni «Fijas» ni «Esta semana» son estados de avance; son **agrupaciones** de tareas:
 
-- **Es un valor del enum compartido (`this_week`), pero solo para tareas.** El modal de
-  bloque no lo ofrece (`STATUSES` en `time-grid.tsx`): un bloque ya está en un día concreto.
-- **El selector de tareas del calendario pone primero las de «Esta semana»**, con
-  encabezados «Esta semana» / «Resto» (solo si hay alguna). Es lo que une las dos vistas.
+- **Fijas** (`fixed`): lo que no se negocia — el trabajo, el negocio. No se elige cada
+  semana, así que **no cuenta contra el tope** y no tiene tope propio. Lo que varía dentro
+  de una fija (qué haces en el trabajo) va en sus subtareas o, si es grande, en una tarea
+  aparte que sí entra en «Esta semana». Cuántas horas recibe cada fija según el día no es
+  cosa del tablero: para eso están los Días modelo.
+- **Esta semana** (`this_week`): de la Bandeja eliges lo variable que priorizas estos 7
+  días (estudio, proyectos, colaboraciones), y eso es lo que colocas en el calendario.
+
+Por eso:
+
+- **Son valores del enum compartido, pero solo para tareas.** El modal de bloque no los
+  ofrece (`STATUSES` en `time-grid.tsx`): un bloque ya está en un día concreto.
+- **El selector de tareas del calendario agrupa Fijas → Esta semana → Resto**, con
+  encabezados solo si alguno de los dos primeros grupos tiene algo. Es lo que une las dos
+  vistas.
 - **Muchas tareas son áreas que nunca acaban** («English», «Job»): entran y salen de «Esta
   semana» pero no llegan a Hecho. Lo concreto va en sus subtareas.
 - El tope (`limit: 5` en `COLUMNS`) es un aviso, no una restricción.
@@ -473,6 +483,7 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   drizzle-kit calcularlo porque, al quitar un valor de enum, recrea el tipo entero; el
   `RENAME` es atómico y no toca filas. Como `--custom` copia el snapshot anterior, se
   corrigió a mano `0009_snapshot.json` (verificado: `generate` dice "No schema changes").
+  Migración `0010` (aplicada): valor `fixed` («Fijas») en `todo_status`, antes de `todo`.
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
   `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
   y `priority` contra los enums). Subtareas ✅ (`app/api/subtasks/route.ts` GET
@@ -485,9 +496,10 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   la UI pueda fusionar la respuesta). Verificado end-to-end contra la BD. ⬜ Falta
   `/api/chat` (agente con tool use + streaming; requiere `ANTHROPIC_API_KEY`) y `/api/plan`.
   Días modelo ✅ (`app/api/day-templates/…`, `app/api/template-blocks/…`). ⬜ Falta la
-  migración `0010`: tabla `llm_calls` (ver "Observabilidad").
+  migración `0011`: tabla `llm_calls` (ver "Observabilidad").
 - 🔶 **Paso 4 — UI:** tablero Kanban ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
-  cliente con `@dnd-kit`: 5 columnas por `status` — Bandeja (`todo`) → **Esta semana**
+  cliente con `@dnd-kit`: 6 columnas por `status` — **Fijas** (`fixed`, sin tope) →
+  Bandeja (`todo`) → **Esta semana**
   (`this_week`, con tope orientativo de 5 que se pinta «n / 5» en rojo al pasarse, sin
   impedir soltar) → En progreso → En pausa → Hecho; el orden de pantalla lo da `COLUMNS`,
   no el enum; tarjetas arrastrables que cambian de
@@ -560,7 +572,7 @@ itera el prompt, y sin evals se itera a ciegas):
    explique esta parte a fondo mientras se construye, no solo que funcione.
 4. **Planificador** (`/api/plan`) — structured outputs + ciclo validar-y-reintentar contra
    la BD. Decidir el modelo con las evals y escribir la decisión aquí.
-5. **Observabilidad** — migración `0010` (`llm_calls`), `lib/agent/telemetry.ts`, y
+5. **Observabilidad** — migración `0011` (`llm_calls`), `lib/agent/telemetry.ts`, y
    `/observabilidad` con la vista de trazas por turno (la de coste es secundaria).
 
 Al implementar: verificar la API exacta del SDK contra `node_modules/@anthropic-ai/sdk`
