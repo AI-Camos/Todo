@@ -292,6 +292,11 @@ domingo para toda la semana, pero los días se parecen mucho entre sí.
   `columns`, el endpoint, `colField` (`date` | `templateId`) y `shiftCol`/`colDelta`. Para
   fechas, desplazar nunca se sale (pegar cruzando el domingo crea en la semana siguiente);
   para plantillas, más allá de la última es `null` y ese bloque no se mueve/pega.
+- **Ancho de columna.** La Semana reparte el ancho (siempre son 7). Días modelo pasa
+  `colWidth={220}`: ancho fijo y scroll horizontal, porque las plantillas crecen sin límite
+  y se iban comprimiendo. Con ancho fijo el marco es `w-fit max-w-full` (sin hueco vacío
+  con pocas plantillas). La columna de horas es `sticky left-0` y opaca en las dos vistas,
+  con `z-[15]`: encima de los bloques (z-10), debajo de la sombra y la barra de «ahora» (z-20).
 - **Aplicar = copiar, no enlazar.** `POST /api/day-templates/:id/apply {date, mode}` copia
   los bloques al día. Editar o borrar la plantilla después no toca días ya aplicados.
   `merge` (por defecto) añade; `replace` vacía el día primero. En una transacción: un

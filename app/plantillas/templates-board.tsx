@@ -195,6 +195,7 @@ export default function TemplatesBoard() {
           shiftCol={shiftCol}
           colDelta={colDelta}
           removeLabel="Quitar de la plantilla"
+          colWidth={220}
           hint="clic en un hueco para añadir · Ctrl/⌘+clic para seleccionar varios · arrastra entre plantillas · Ctrl+C / Ctrl+V para copiar"
           toolbar={newForm}
           headerExtra={(c) => {

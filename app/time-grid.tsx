@@ -99,6 +99,11 @@ type Props = {
   headerExtra?: (col: GridColumn) => ReactNode;
   hint?: string;
   removeLabel?: string;
+  // Ancho FIJO de cada columna en px. Sin él, las columnas se reparten el ancho
+  // (lo justo para la Semana: siempre son 7). Con él, cada columna mide eso y
+  // sobra scroll horizontal: es lo que necesitan los Días modelo, que crecen
+  // sin límite y se iban comprimiendo con cada plantilla nueva.
+  colWidth?: number;
 };
 
 const START_HOUR = 5;
@@ -269,6 +274,7 @@ export default function TimeGrid({
   headerExtra,
   hint,
   removeLabel = "Quitar",
+  colWidth,
 }: Props) {
   const [todos, setTodos] = useState<Todo[]>([]);
   const [subtasks, setSubtasks] = useState<Subtask[]>([]);
@@ -688,8 +694,12 @@ export default function TimeGrid({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [blocks, selectedIds, clipboard]);
 
-  // Columnas de ancho fluido, pero con un mínimo para que no se aplasten.
-  const gridCols = `3.5rem repeat(${columns.length}, minmax(100px, 1fr))`;
+  // Columnas de ancho fijo (`colWidth`) o fluido con un mínimo para que no se
+  // aplasten. En ambos casos el contenedor hace scroll horizontal si no cabe.
+  const gridCols = colWidth
+    ? `3.5rem repeat(${columns.length}, ${colWidth}px)`
+    : `3.5rem repeat(${columns.length}, minmax(100px, 1fr))`;
+  const gridMinWidth = 56 + columns.length * (colWidth ?? 100);
 
   return (
     <div>
@@ -722,14 +732,22 @@ export default function TimeGrid({
       )}
 
       {/* Cuadrícula */}
-      <div className="overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800">
-        <div style={{ minWidth: 56 + columns.length * 100 }}>
+      {/* Con ancho fijo, el marco se ajusta al contenido (`w-fit`) hasta el
+          ancho de la página: con pocas plantillas no queda un hueco vacío a la
+          derecha; con muchas, aparece el scroll. */}
+      <div
+        className={`overflow-x-auto rounded-xl border border-zinc-200 dark:border-zinc-800 ${
+          colWidth ? "w-fit max-w-full" : ""
+        }`}
+      >
+        <div style={{ minWidth: gridMinWidth }}>
           {/* Cabecera de columnas */}
           <div
             className="grid border-b border-zinc-200 bg-zinc-50 text-sm dark:border-zinc-800 dark:bg-zinc-900/60"
             style={{ gridTemplateColumns: gridCols }}
           >
-            <div className="px-2 py-2" />
+            {/* Esquina fija: acompaña a la columna de horas al hacer scroll. */}
+            <div className="sticky left-0 z-[15] bg-zinc-50 px-2 py-2 dark:bg-zinc-900" />
             {columns.map((c) => (
               <div
                 key={c.key}
@@ -757,8 +775,12 @@ export default function TimeGrid({
             className="relative grid"
             style={{ height: BODY_H, gridTemplateColumns: gridCols }}
           >
-            {/* Columna de horas (gutter) */}
-            <div className="relative">
+            {/* Columna de horas (gutter). `sticky` para que no se vaya con el
+                scroll horizontal: sin ella no sabrías qué hora estás mirando.
+                Opaca (fondo de la página) para tapar los bloques que pasan por
+                debajo, y z-[15]: por encima de los bloques (z-10) pero debajo
+                de la sombra de arrastre y de la barra de "ahora" (z-20). */}
+            <div className="sticky left-0 z-[15] bg-background">
               {HOURS.map((hour, i) => (
                 <div
                   key={hour}
