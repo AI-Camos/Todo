@@ -14,6 +14,7 @@ export const todoStatus = pgEnum("todo_status", [
   "todo", // Por hacer
   "doing", // En progreso
   "paused", // En pausa
+  "pending", // Pendiente
   "done", // Hecho
 ]);
 

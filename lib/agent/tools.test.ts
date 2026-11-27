@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { todos } from "@/lib/db/schema";
+import { todos, type TodoStatus } from "@/lib/db/schema";
 import { consultarTareas, crearTarea } from "./tools";
 
 // run() puede devolver string o bloques de contenido; nuestras tools de datos
@@ -23,7 +23,7 @@ const sembradas: number[] = [];
 
 async function sembrar(
   title: string,
-  status: "todo" | "doing" | "paused" | "done",
+  status: TodoStatus,
   priority: "low" | "medium" | "high",
 ) {
   const [row] = await db
