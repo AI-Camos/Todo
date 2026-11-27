@@ -616,11 +616,13 @@ function Card({
             calendario, que es donde de verdad sirve para distinguir bloques. */}
         <div className="shrink-0">
           <button
-            onClick={(e) =>
-              setPickerAt((at) =>
-                at ? null : e.currentTarget.getBoundingClientRect(),
-              )
-            }
+            onClick={(e) => {
+              // La posición se lee AQUÍ, no dentro del updater de setState:
+              // React ejecuta el updater después, durante el render, cuando el
+              // evento ya terminó y `e.currentTarget` es null.
+              const rect = e.currentTarget.getBoundingClientRect();
+              setPickerAt((at) => (at ? null : rect));
+            }}
             aria-label={`Color de "${todo.title}"`}
             aria-expanded={pickerAt !== null}
             className={`block size-4 rounded-full ring-1 ring-black/10 transition hover:scale-110 dark:ring-white/20 ${TASK_COLORS[color].swatch}`}
