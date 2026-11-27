@@ -12,9 +12,11 @@ import {
 // Estado de una tarea = columna del tablero Kanban. El orden de las columnas en
 // pantalla lo decide `COLUMNS` en app/todo-list.tsx, no el de este enum (un
 // valor de enum de Postgres no se puede reordenar sin recrear el tipo).
-// El mismo enum es el estado de los bloques del calendario, pero `this_week`
-// solo tiene sentido para TAREAS: un bloque ya está en un día concreto.
+// El mismo enum es el estado de los bloques del calendario, pero `fixed` y
+// `this_week` solo tienen sentido para TAREAS: un bloque ya está en un día
+// concreto.
 export const todoStatus = pgEnum("todo_status", [
+  "fixed", // Fijas: lo que no se negocia (trabajo, negocio). Sin tope, no se elige
   "todo", // Bandeja: todo lo que quieres hacer algún día, sin compromiso
   "doing", // En progreso
   "paused", // En pausa

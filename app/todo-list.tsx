@@ -20,7 +20,7 @@ import {
   type TaskColor,
 } from "@/lib/colors";
 
-type Status = "todo" | "doing" | "paused" | "this_week" | "done";
+type Status = "fixed" | "todo" | "doing" | "paused" | "this_week" | "done";
 type Priority = "low" | "medium" | "high";
 
 type Todo = {
@@ -43,6 +43,8 @@ type Subtask = {
 };
 
 // El tablero se lee como un embudo: Bandeja → Esta semana → En progreso → Hecho.
+// «Fijas» va delante y aparte: lo que no se negocia (trabajo, negocio) no es una
+// elección semanal, así que no cuenta contra el tope de «Esta semana».
 // El orden de pantalla es el de este array (no el del enum de la BD).
 const COLUMNS: {
   status: Status;
@@ -52,6 +54,7 @@ const COLUMNS: {
   // qué priorizas. No impide soltar más; solo avisa.
   limit?: number;
 }[] = [
+  { status: "fixed", label: "Fijas", accent: "bg-sky-500" },
   { status: "todo", label: "Bandeja", accent: "bg-zinc-400" },
   { status: "this_week", label: "Esta semana", accent: "bg-violet-500", limit: 5 },
   { status: "doing", label: "En progreso", accent: "bg-blue-500" },
@@ -246,6 +249,7 @@ export default function TodoList() {
   // Agrupa por columna y ordena por prioridad y luego por recencia.
   const byStatus = useMemo(() => {
     const groups: Record<Status, Todo[]> = {
+      fixed: [],
       todo: [],
       this_week: [],
       doing: [],
@@ -321,7 +325,7 @@ export default function TodoList() {
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-6">
             {COLUMNS.map((col) => (
               <Column
                 key={col.status}

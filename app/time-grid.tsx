@@ -11,7 +11,7 @@ import { TASK_COLORS, resolveColor } from "@/lib/colors";
 // Todo lo demás (arrastrar, sombra de destino, copiar/pegar, selección
 // múltiple, subtareas, medias horas) se comparte para que no diverjan.
 
-type Status = "todo" | "doing" | "paused" | "this_week" | "done";
+type Status = "fixed" | "todo" | "doing" | "paused" | "this_week" | "done";
 type Priority = "low" | "medium" | "high";
 
 type Todo = {
@@ -117,9 +117,9 @@ const ROW_H = 48; // px por hora
 const HALF_H = ROW_H * STEP; // px por media hora
 const BODY_H = HOURS.length * ROW_H;
 
-// Estados elegibles para un BLOQUE. `this_week` existe en el enum compartido
-// pero no se ofrece: «Esta semana» es una selección de tareas en el tablero, y
-// un bloque ya está colocado en un día concreto.
+// Estados elegibles para un BLOQUE. `fixed` y `this_week` existen en el enum
+// compartido pero no se ofrecen: «Fijas» y «Esta semana» son agrupaciones de
+// TAREAS en el tablero, y un bloque ya está colocado en un día concreto.
 const STATUSES: Status[] = ["todo", "doing", "paused", "done"];
 
 const STATUS_UI: Record<
@@ -144,8 +144,14 @@ const STATUS_UI: Record<
     block:
       "border-l-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-100",
   },
-  // Solo para pintar un bloque que llegase con este estado (el tipo lo exige);
-  // no se puede elegir en el modal, ver STATUSES.
+  // Estas dos solo existen para pintar un bloque que llegase con ese estado (el
+  // tipo lo exige); no se pueden elegir en el modal, ver STATUSES.
+  fixed: {
+    label: "Fijas",
+    dot: "bg-sky-500",
+    block:
+      "border-l-sky-500 bg-sky-50 text-sky-800 dark:bg-sky-950/60 dark:text-sky-100",
+  },
   this_week: {
     label: "Esta semana",
     dot: "bg-violet-500",
@@ -1249,6 +1255,10 @@ function StatusModal({
   );
 }
 
+// Grupos del selector de tareas del calendario, en orden de aparición.
+const PICKER_GROUPS = ["Fijas", "Esta semana", "Resto"] as const;
+const pickerGroup = (s: Status) => (s === "fixed" ? 0 : s === "this_week" ? 1 : 2);
+
 function TaskPicker({
   todos,
   subtasksByTodo,
@@ -1295,25 +1305,19 @@ function TaskPicker({
       return null;
     })
     .filter((x): x is { todo: Todo; subs: Subtask[] } => x !== null)
-    // Las de «Esta semana» van primero: es lo que decidiste en el tablero, y
-    // aquí es donde lo colocas. `sort` es estable, así que dentro de cada
-    // grupo se conserva el orden de la API.
-    .sort(
-      (a, b) =>
-        Number(b.todo.status === "this_week") -
-        Number(a.todo.status === "this_week"),
-    );
-  const weekCount = filtered.filter((x) => x.todo.status === "this_week").length;
-  // Los encabezados solo aparecen si hay algo en «Esta semana»; si no, la
-  // lista se ve como siempre.
-  const sectionTitle = (i: number) =>
-    weekCount === 0
-      ? null
-      : i === 0
-        ? "Esta semana"
-        : i === weekCount
-          ? "Resto"
-          : null;
+    // Orden: Fijas (lo que más se coloca) → Esta semana (lo que decidiste en
+    // el tablero) → Resto. `sort` es estable, así que dentro de cada grupo se
+    // conserva el orden de la API.
+    .sort((a, b) => pickerGroup(a.todo.status) - pickerGroup(b.todo.status));
+  // Los encabezados solo aparecen si hay algo en Fijas o en Esta semana; si
+  // no, la lista se ve como siempre, sin un «Resto» huérfano.
+  const grouped = filtered.some((x) => pickerGroup(x.todo.status) < 2);
+  const sectionTitle = (i: number) => {
+    if (!grouped) return null;
+    const g = pickerGroup(filtered[i].todo.status);
+    const prev = i === 0 ? -1 : pickerGroup(filtered[i - 1].todo.status);
+    return g !== prev ? PICKER_GROUPS[g] : null;
+  };
 
   return (
     <div

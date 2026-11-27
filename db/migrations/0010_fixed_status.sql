@@ -1,0 +1,1 @@
+ALTER TYPE "public"."todo_status" ADD VALUE 'fixed' BEFORE 'todo';
