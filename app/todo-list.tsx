@@ -84,6 +84,8 @@ export default function TodoList() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [activeId, setActiveId] = useState<number | null>(null);
+  // Tarea pendiente de confirmar su borrado (null = no hay diálogo abierto).
+  const [confirming, setConfirming] = useState<Todo | null>(null);
 
   const sensors = useSensors(
     // Pequeña distancia de activación: así un clic/doble-clic o pulsar un
@@ -325,7 +327,11 @@ export default function TodoList() {
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+          {/* Columnas de ancho FIJO con scroll horizontal, no un grid que
+              reparte el ancho: con 6 columnas el grid las dejaba en ~170 px y
+              los controles de la tarjeta no cabían. Al arrastrar cerca del
+              borde, @dnd-kit desplaza el contenedor solo (autoScroll). */}
+          <div className="-mx-1 mt-6 flex snap-x gap-4 overflow-x-auto px-1 pb-3">
             {COLUMNS.map((col) => (
               <Column
                 key={col.status}
@@ -346,7 +352,9 @@ export default function TodoList() {
                 onCancelEdit={() => setEditingId(null)}
                 onChangePriority={(id, p) => patch(id, { priority: p })}
                 onChangeColor={(id, c) => patch(id, { color: c })}
-                onRemove={remove}
+                onRemove={(id) =>
+                  setConfirming(todos.find((t) => t.id === id) ?? null)
+                }
                 activeId={activeId}
               />
             ))}
@@ -362,6 +370,18 @@ export default function TodoList() {
         <p className="mt-4 text-xs text-zinc-500">
           {pending} sin terminar de {todos.length}
         </p>
+      )}
+
+      {confirming && (
+        <ConfirmDelete
+          todo={confirming}
+          subtaskCount={subtasksByTodo.get(confirming.id)?.length ?? 0}
+          onConfirm={() => {
+            remove(confirming.id);
+            setConfirming(null);
+          }}
+          onCancel={() => setConfirming(null)}
+        />
       )}
     </div>
   );
@@ -413,7 +433,7 @@ function Column({
   return (
     <section
       ref={setNodeRef}
-      className={`flex min-h-40 flex-col gap-2 rounded-xl border p-2.5 transition-colors ${
+      className={`flex min-h-40 w-72 shrink-0 snap-start flex-col gap-2 rounded-xl border p-2.5 transition-colors ${
         isOver
           ? "border-zinc-400 bg-zinc-100/70 dark:border-zinc-500 dark:bg-zinc-800/50"
           : "border-zinc-200 bg-zinc-50/50 dark:border-zinc-800 dark:bg-zinc-900/40"
@@ -508,16 +528,30 @@ function Card({
   const { attributes, listeners, setNodeRef, transform } = useDraggable({
     id: todo.id,
   });
-  const [pickingColor, setPickingColor] = useState(false);
+  // Posición del círculo de color al abrir la paleta (null = cerrada). La
+  // paleta se pinta con `position: fixed` desde aquí; ver ColorPicker.
+  const [pickerAt, setPickerAt] = useState<DOMRect | null>(null);
   const color = resolveColor(todo.color, todo.id);
 
   return (
     <div
       ref={setNodeRef}
       style={{ transform: CSS.Translate.toString(transform), opacity: hidden ? 0.4 : 1 }}
-      className={`group relative rounded-lg border border-l-4 border-zinc-200 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-800 ${TASK_COLORS[color].border}`}
+      className="group relative rounded-lg border border-zinc-200 bg-white pl-1.5 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
     >
-      <div className="flex items-start gap-1.5 p-2.5">
+      {/* Franja de color de la tarea. Es un elemento propio y no `border-l-*`
+          porque el `dark:border-zinc-700` de la tarjeta pinta los CUATRO
+          bordes y, al ir después en el CSS, dejaba la franja gris en modo
+          oscuro. Va encima del borde (-px) para que llegue a las esquinas. */}
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute -bottom-px -left-px -top-px w-1.5 rounded-l-lg ${TASK_COLORS[color].swatch}`}
+      />
+      {/* Fila del título teñida con el color: lo justo para reconocer la
+          tarea de un vistazo sin que la tarjeta entera compita con la columna. */}
+      <div
+        className={`flex items-start gap-1.5 rounded-tr-lg p-2.5 ${TASK_COLORS[color].tint}`}
+      >
         {/* Asa de arrastre: solo aquí se inicia el drag, para no chocar con los controles. */}
         <button
           {...attributes}
@@ -558,14 +592,17 @@ function Card({
         onRemove={onRemoveSubtask}
       />
 
-      <div className="flex items-center gap-2 border-t border-zinc-100 px-2.5 py-1.5 dark:border-zinc-700/60">
-        <label className="flex items-center gap-1.5 text-xs">
-          <span className={`size-2 rounded-full ${PRIORITY[todo.priority].dot}`} />
+      {/* `flex-wrap`: si la tarjeta es muy estrecha, los controles bajan a otra
+          línea DENTRO de la tarjeta en vez de desbordarse sobre la columna de al
+          lado. */}
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-zinc-100 px-2.5 py-1.5 dark:border-zinc-700/60">
+        <label className="flex min-w-0 items-center gap-1.5 text-xs">
+          <span className={`size-2 shrink-0 rounded-full ${PRIORITY[todo.priority].dot}`} />
           <select
             value={todo.priority}
             onChange={(e) => onChangePriority(todo.id, e.target.value as Priority)}
             aria-label={`Prioridad de "${todo.title}"`}
-            className={`cursor-pointer rounded bg-transparent py-0.5 pr-1 outline-none ${PRIORITY[todo.priority].text}`}
+            className={`min-w-0 cursor-pointer rounded bg-transparent py-0.5 pr-1 outline-none ${PRIORITY[todo.priority].text}`}
           >
             {PRIORITIES.map((p) => (
               <option key={p} value={p} className="text-zinc-800">
@@ -577,38 +614,56 @@ function Card({
 
         {/* Selector de color: abre la paleta completa. El color viaja al
             calendario, que es donde de verdad sirve para distinguir bloques. */}
-        <div className="relative">
+        <div className="shrink-0">
           <button
-            onClick={() => setPickingColor((v) => !v)}
+            onClick={(e) =>
+              setPickerAt((at) =>
+                at ? null : e.currentTarget.getBoundingClientRect(),
+              )
+            }
             aria-label={`Color de "${todo.title}"`}
-            aria-expanded={pickingColor}
+            aria-expanded={pickerAt !== null}
             className={`block size-4 rounded-full ring-1 ring-black/10 transition hover:scale-110 dark:ring-white/20 ${TASK_COLORS[color].swatch}`}
           />
-          {pickingColor && (
+          {pickerAt && (
             <ColorPicker
+              anchor={pickerAt}
               current={todo.color}
               onPick={(c) => {
                 onChangeColor(todo.id, c);
-                setPickingColor(false);
+                setPickerAt(null);
               }}
-              onClose={() => setPickingColor(false)}
+              onClose={() => setPickerAt(null)}
             />
           )}
         </div>
 
-        <button
-          onClick={() => onStartEdit(todo)}
-          className="ml-auto rounded px-1.5 py-0.5 text-xs text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-zinc-700 group-hover:opacity-100 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-        >
-          Editar
-        </button>
-        <button
-          onClick={() => onRemove(todo.id)}
-          aria-label={`Eliminar "${todo.title}"`}
-          className="rounded px-1.5 py-0.5 text-xs text-zinc-400 opacity-0 transition hover:bg-red-50 hover:text-red-600 group-hover:opacity-100 dark:hover:bg-red-950/50 dark:hover:text-red-400"
-        >
-          Eliminar
-        </button>
+        {/* Iconos y no texto: con 6 columnas la tarjeta mide ~150 px y «Editar»
+            + «Eliminar» no cabían; el último se salía por la derecha y quedaba
+            tapado por la columna siguiente. `shrink-0` para que no se aplasten,
+            y opacidad parcial (no 0) para que se vean también sin hover. */}
+        <div className="ml-auto flex shrink-0 items-center gap-0.5 opacity-50 transition group-hover:opacity-100">
+          <button
+            onClick={() => onStartEdit(todo)}
+            aria-label={`Editar "${todo.title}"`}
+            title="Editar"
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-3.5" aria-hidden>
+              <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5z" strokeLinejoin="round" />
+            </svg>
+          </button>
+          <button
+            onClick={() => onRemove(todo.id)}
+            aria-label={`Eliminar "${todo.title}"`}
+            title="Eliminar"
+            className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/50 dark:hover:text-red-400"
+          >
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="size-3.5" aria-hidden>
+              <path d="M2.5 4h11M6.5 4V2.5h3V4M4 4l.7 9.5h6.6L12 4M6.75 6.5v4.5M9.25 6.5v4.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -734,22 +789,121 @@ function SubtaskList({
 
 // Paleta desplegable. `current` es el valor CRUDO de la tarea (null = auto),
 // no el resuelto: hay que poder distinguir "gris automático" de "gris elegido".
+// Confirmación antes de borrar una tarea. No es un trámite: el borrado va en
+// cascada (subtareas, bloques del calendario y de los días modelo), así que un
+// clic accidental en «Job» se llevaría semanas de horario. Por eso el foco
+// arranca en «Cancelar»: Enter sin pensar no borra nada.
+function ConfirmDelete({
+  todo,
+  subtaskCount,
+  onConfirm,
+  onCancel,
+}: {
+  todo: Todo;
+  subtaskCount: number;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 p-4 pt-32"
+      onClick={onCancel}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="confirm-delete-title"
+        className="w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <p
+          id="confirm-delete-title"
+          className="mb-2 text-sm font-medium text-zinc-800 dark:text-zinc-100"
+        >
+          ¿Seguro que quieres eliminar «{todo.title}»?
+        </p>
+        <p className="mb-4 text-sm text-zinc-500 dark:text-zinc-400">
+          Se borrarán también{" "}
+          {subtaskCount > 0 &&
+            `sus ${subtaskCount} subtarea${subtaskCount === 1 ? "" : "s"} y `}
+          todos sus bloques del calendario y de los días modelo. No se puede
+          deshacer.
+        </p>
+        <div className="flex justify-end gap-2">
+          <button
+            autoFocus
+            onClick={onCancel}
+            className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+          >
+            Cancelar
+          </button>
+          <button
+            onClick={onConfirm}
+            className="rounded-lg bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-700"
+          >
+            Eliminar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Alto aproximado de la paleta (5 filas de colores + «Automático»): decide si
+// cabe abriéndose hacia arriba o hay que abrirla hacia abajo.
+const PICKER_H = 180;
+const PICKER_W = 180;
+
+// La paleta va con `position: fixed` relativa a la ventana, anclada al círculo
+// de color. No puede ser `absolute` dentro de la tarjeta: el tablero tiene
+// scroll horizontal, y un contenedor con overflow recorta también en vertical,
+// así que en la primera tarjeta de una columna la paleta quedaba cortada.
+// Al hacer scroll se cierra, porque la posición guardada dejaría de cuadrar.
 function ColorPicker({
+  anchor,
   current,
   onPick,
   onClose,
 }: {
+  anchor: DOMRect;
   current: string | null;
   onPick: (c: TaskColor | null) => void;
   onClose: () => void;
 }) {
+  useEffect(() => {
+    // `capture`: el evento de scroll no burbujea, y el que importa es el del
+    // contenedor del tablero, no solo el de la ventana.
+    window.addEventListener("scroll", onClose, true);
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("scroll", onClose, true);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  const openUp = anchor.top > PICKER_H + 16;
+  // Sin salirse por la derecha en la última columna visible.
+  const left = Math.max(8, Math.min(anchor.left, window.innerWidth - PICKER_W - 8));
+  const style = openUp
+    ? { left, bottom: window.innerHeight - anchor.top + 8 }
+    : { left, top: anchor.bottom + 8 };
+
   return (
     <>
       {/* Capa que cierra al hacer clic fuera, sin necesidad de refs. */}
       <div className="fixed inset-0 z-20" onClick={onClose} />
       <div
         role="dialog"
-        className="absolute bottom-full left-0 z-30 mb-2 w-max rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+        style={style}
+        className="fixed z-30 w-max rounded-lg border border-zinc-200 bg-white p-2 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
         onKeyDown={(e) => e.key === "Escape" && onClose()}
       >
         <div className="grid grid-cols-6 gap-1.5">
@@ -786,16 +940,24 @@ function ColorPicker({
 // Copia visual usada dentro del DragOverlay mientras se arrastra.
 function CardBody({ todo, dragging }: { todo: Todo; dragging?: boolean }) {
   return (
+    // Misma franja + tinte que la tarjeta real: arrastrando tiene que seguir
+    // reconociéndose qué tarea es.
     <div
-      className={`rounded-lg border border-l-4 border-zinc-300 bg-white p-2.5 shadow-lg dark:border-zinc-600 dark:bg-zinc-800 ${
-        TASK_COLORS[resolveColor(todo.color, todo.id)].border
-      } ${dragging ? "cursor-grabbing" : ""}`}
+      className={`relative rounded-lg border border-zinc-300 bg-white pl-1.5 shadow-lg dark:border-zinc-600 dark:bg-zinc-800 ${
+        dragging ? "cursor-grabbing" : ""
+      }`}
     >
-      <div className="flex items-center gap-1.5">
+      <span
+        aria-hidden
+        className={`pointer-events-none absolute -bottom-px -left-px -top-px w-1.5 rounded-l-lg ${TASK_COLORS[resolveColor(todo.color, todo.id)].swatch}`}
+      />
+      <div
+        className={`flex items-center gap-1.5 rounded-tr-lg p-2.5 pb-1.5 ${TASK_COLORS[resolveColor(todo.color, todo.id)].tint}`}
+      >
         <span className="text-zinc-400">⠿</span>
         <span className="text-sm text-zinc-800 dark:text-zinc-100">{todo.title}</span>
       </div>
-      <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+      <div className="flex items-center gap-1.5 px-2.5 pb-2.5 pt-1.5 text-xs">
         <span className={`size-2 rounded-full ${PRIORITY[todo.priority].dot}`} />
         <span className={PRIORITY[todo.priority].text}>
           {PRIORITY[todo.priority].label}

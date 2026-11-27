@@ -292,6 +292,11 @@ domingo para toda la semana, pero los días se parecen mucho entre sí.
   `columns`, el endpoint, `colField` (`date` | `templateId`) y `shiftCol`/`colDelta`. Para
   fechas, desplazar nunca se sale (pegar cruzando el domingo crea en la semana siguiente);
   para plantillas, más allá de la última es `null` y ese bloque no se mueve/pega.
+- **Ancho de columna.** La Semana reparte el ancho (siempre son 7). Días modelo pasa
+  `colWidth={220}`: ancho fijo y scroll horizontal, porque las plantillas crecen sin límite
+  y se iban comprimiendo. Con ancho fijo el marco es `w-fit max-w-full` (sin hueco vacío
+  con pocas plantillas). La columna de horas es `sticky left-0` y opaca en las dos vistas,
+  con `z-[15]`: encima de los bloques (z-10), debajo de la sombra y la barra de «ahora» (z-20).
 - **Aplicar = copiar, no enlazar.** `POST /api/day-templates/:id/apply {date, mode}` copia
   los bloques al día. Editar o borrar la plantilla después no toca días ya aplicados.
   `merge` (por defecto) añade; `replace` vacía el día primero. En una transacción: un
@@ -470,8 +475,10 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   vía un helper `isHalfStep`. Verificado round-trip con `hour:6.5, duration:1.5`.
   Migración `0005` (aplicada): columna `color` (text, nullable) en `todos` — color
   elegido por el usuario para distinguir tareas en el calendario. Guarda una **clave**
-  de la paleta de `lib/colors.ts` (18 colores), no una clase ni un hex; `null` = automático
-  (derivado del id). Se valida en la API contra la paleta, **no** con un enum de Postgres:
+  de la paleta de `lib/colors.ts` (ampliada a 30 colores: los 18 tonos de Tailwind + 6
+  oscuros + 6 claros/neutros), no una clase ni un hex; `null` = automático (derivado del id,
+  pero **solo entre los 18 originales** — `AUTO_COLOR_KEYS`: el automático sale de
+  `id % length`, así que ampliar esa lista recolorearía de golpe todas las tareas sin color). Se valida en la API contra la paleta, **no** con un enum de Postgres:
   la paleta es presentación y se retoca a menudo, y un enum obligaría a migrar por color.
   Migración `0006` (aplicada): tabla `subtasks` (`todo_id` FK→todos `ON DELETE CASCADE`,
   `title`) + columna `subtask_id` (nullable, FK→subtasks **`ON DELETE SET NULL`**) en
@@ -504,7 +511,13 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   impedir soltar) → En progreso → En pausa → Hecho; el orden de pantalla lo da `COLUMNS`,
   no el enum; tarjetas arrastrables que cambian de
   estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
-  y eliminar; orden dentro de columna por prioridad y recencia; **lista de subtareas** en
+  y eliminar (iconos ✎/🗑, y el borrado pide **confirmación** en un diálogo que avisa de la
+  cascada — subtareas y bloques del calendario y de los días modelo — con el foco en
+  «Cancelar»); columnas de **ancho fijo** (`w-72`) con scroll horizontal en vez de un grid
+  que las aplastaba; el color de la tarea es una **franja** propia (no `border-l-*`: el
+  `dark:border-zinc-700` de la tarjeta la pintaba de gris en modo oscuro) + un tinte suave
+  solo en la fila del título; la paleta de color va con `position: fixed` porque el
+  contenedor con scroll la recortaba; orden dentro de columna por prioridad y recencia; **lista de subtareas** en
   cada tarjeta: añadir con Enter encadenado, renombrar al clic, borrar con ×, y el botón
   "+ subtarea" solo asoma al pasar por encima si la tarea no tiene ninguna). Calendario
   semanal ✅
@@ -545,7 +558,9 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   padding. La subtarea lleva `shrink-[3]` para encogerse antes que el título: el bloque tiene
   que seguir leyéndose como «Trabajo» aunque se corte el detalle. La sombra de arrastre hace
   lo mismo, pero poniendo la hora **primera**: arrastrando es el dato que se viene a mirar.
-  Navegación Tablero↔Semana↔Días modelo (`app/nav.tsx`). **Días modelo** ✅
+  Navegación Tablero↔Semana↔Días modelo (`app/nav.tsx`: control segmentado — cápsula con
+  las tres vistas como botones con icono, la activa en blanco con sombra y icono violeta,
+  `aria-current="page"`). Favicon propio en `app/icon.svg`. **Días modelo** ✅
   (`app/plantillas/`: una columna por plantilla, crear/renombrar/borrar en la cabecera,
   «Aplicar a…» una fecha; en la Semana, ⧉ por día para aplicar o guardar como modelo).
   Dark mode
