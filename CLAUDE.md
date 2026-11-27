@@ -558,7 +558,9 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   padding. La subtarea lleva `shrink-[3]` para encogerse antes que el título: el bloque tiene
   que seguir leyéndose como «Trabajo» aunque se corte el detalle. La sombra de arrastre hace
   lo mismo, pero poniendo la hora **primera**: arrastrando es el dato que se viene a mirar.
-  Navegación Tablero↔Semana↔Días modelo (`app/nav.tsx`). **Días modelo** ✅
+  Navegación Tablero↔Semana↔Días modelo (`app/nav.tsx`: control segmentado — cápsula con
+  las tres vistas como botones con icono, la activa en blanco con sombra y icono violeta,
+  `aria-current="page"`). Favicon propio en `app/icon.svg`. **Días modelo** ✅
   (`app/plantillas/`: una columna por plantilla, crear/renombrar/borrar en la cabecera,
   «Aplicar a…» una fecha; en la Semana, ⧉ por día para aplicar o guardar como modelo).
   Dark mode
