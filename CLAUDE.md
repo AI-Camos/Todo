@@ -470,8 +470,10 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   vía un helper `isHalfStep`. Verificado round-trip con `hour:6.5, duration:1.5`.
   Migración `0005` (aplicada): columna `color` (text, nullable) en `todos` — color
   elegido por el usuario para distinguir tareas en el calendario. Guarda una **clave**
-  de la paleta de `lib/colors.ts` (18 colores), no una clase ni un hex; `null` = automático
-  (derivado del id). Se valida en la API contra la paleta, **no** con un enum de Postgres:
+  de la paleta de `lib/colors.ts` (ampliada a 30 colores: los 18 tonos de Tailwind + 6
+  oscuros + 6 claros/neutros), no una clase ni un hex; `null` = automático (derivado del id,
+  pero **solo entre los 18 originales** — `AUTO_COLOR_KEYS`: el automático sale de
+  `id % length`, así que ampliar esa lista recolorearía de golpe todas las tareas sin color). Se valida en la API contra la paleta, **no** con un enum de Postgres:
   la paleta es presentación y se retoca a menudo, y un enum obligaría a migrar por color.
   Migración `0006` (aplicada): tabla `subtasks` (`todo_id` FK→todos `ON DELETE CASCADE`,
   `title`) + columna `subtask_id` (nullable, FK→subtasks **`ON DELETE SET NULL`**) en
@@ -504,7 +506,13 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   impedir soltar) → En progreso → En pausa → Hecho; el orden de pantalla lo da `COLUMNS`,
   no el enum; tarjetas arrastrables que cambian de
   estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
-  y eliminar; orden dentro de columna por prioridad y recencia; **lista de subtareas** en
+  y eliminar (iconos ✎/🗑, y el borrado pide **confirmación** en un diálogo que avisa de la
+  cascada — subtareas y bloques del calendario y de los días modelo — con el foco en
+  «Cancelar»); columnas de **ancho fijo** (`w-72`) con scroll horizontal en vez de un grid
+  que las aplastaba; el color de la tarea es una **franja** propia (no `border-l-*`: el
+  `dark:border-zinc-700` de la tarjeta la pintaba de gris en modo oscuro) + un tinte suave
+  solo en la fila del título; la paleta de color va con `position: fixed` porque el
+  contenedor con scroll la recortaba; orden dentro de columna por prioridad y recencia; **lista de subtareas** en
   cada tarjeta: añadir con Enter encadenado, renombrar al clic, borrar con ×, y el botón
   "+ subtarea" solo asoma al pasar por encima si la tarea no tiene ninguna). Calendario
   semanal ✅
