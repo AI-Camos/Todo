@@ -303,6 +303,22 @@ domingo para toda la semana, pero los días se parecen mucho entre sí.
   ⧉ en la cabecera de cada día de la Semana, que además permite **guardar ese día como
   plantilla** (`POST /api/day-templates {name, fromDate}`).
 
+## «Esta semana» (tablero → calendario)
+
+«Esta semana» no es un estado de avance sino una **selección**: de la Bandeja eliges lo que
+priorizas estos 7 días, y eso es lo que colocas en el calendario. Por eso:
+
+- **Es un valor del enum compartido (`this_week`), pero solo para tareas.** El modal de
+  bloque no lo ofrece (`STATUSES` en `time-grid.tsx`): un bloque ya está en un día concreto.
+- **El selector de tareas del calendario pone primero las de «Esta semana»**, con
+  encabezados «Esta semana» / «Resto» (solo si hay alguna). Es lo que une las dos vistas.
+- **Muchas tareas son áreas que nunca acaban** («English», «Job»): entran y salen de «Esta
+  semana» pero no llegan a Hecho. Lo concreto va en sus subtareas.
+- El tope (`limit: 5` en `COLUMNS`) es un aviso, no una restricción.
+- Pendiente para el agente: la descripción de `consultar_tareas` dice «qué tiene
+  pendiente»; ahora que existe `this_week`, conviene un caso de eval para «¿qué toca esta
+  semana?» antes de retocarla.
+
 ## El harness de evaluación (`evals/`)
 
 **Qué es y por qué existe.** Un system prompt o una descripción de tool son código sin
@@ -452,8 +468,11 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   `schedule_blocks`. Ver "Subtareas" abajo para el porqué del `SET NULL`.
   Migración `0007` (aplicada): `day_templates` + `template_blocks` (días modelo; ver
   "Días modelo"). Migración `0008` (aplicada): valor `pending` («Pendiente») en el enum
-  `todo_status`, antes de `done`. Es el MISMO enum para tareas y bloques, así que añade
-  una columna al tablero y un estado más en el calendario.
+  `todo_status`, antes de `done`. Migración `0009` (aplicada, SQL escrito a mano con
+  `drizzle-kit generate --custom`): `RENAME VALUE 'pending' TO 'this_week'`. No se dejó a
+  drizzle-kit calcularlo porque, al quitar un valor de enum, recrea el tipo entero; el
+  `RENAME` es atómico y no toca filas. Como `--custom` copia el snapshot anterior, se
+  corrigió a mano `0009_snapshot.json` (verificado: `generate` dice "No schema changes").
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
   `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
   y `priority` contra los enums). Subtareas ✅ (`app/api/subtasks/route.ts` GET
@@ -466,9 +485,12 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   la UI pueda fusionar la respuesta). Verificado end-to-end contra la BD. ⬜ Falta
   `/api/chat` (agente con tool use + streaming; requiere `ANTHROPIC_API_KEY`) y `/api/plan`.
   Días modelo ✅ (`app/api/day-templates/…`, `app/api/template-blocks/…`). ⬜ Falta la
-  migración `0009`: tabla `llm_calls` (ver "Observabilidad").
+  migración `0010`: tabla `llm_calls` (ver "Observabilidad").
 - 🔶 **Paso 4 — UI:** tablero Kanban ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
-  cliente con `@dnd-kit`: 5 columnas por `status`, tarjetas arrastrables que cambian de
+  cliente con `@dnd-kit`: 5 columnas por `status` — Bandeja (`todo`) → **Esta semana**
+  (`this_week`, con tope orientativo de 5 que se pinta «n / 5» en rojo al pasarse, sin
+  impedir soltar) → En progreso → En pausa → Hecho; el orden de pantalla lo da `COLUMNS`,
+  no el enum; tarjetas arrastrables que cambian de
   estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
   y eliminar; orden dentro de columna por prioridad y recencia; **lista de subtareas** en
   cada tarjeta: añadir con Enter encadenado, renombrar al clic, borrar con ×, y el botón
@@ -538,7 +560,7 @@ itera el prompt, y sin evals se itera a ciegas):
    explique esta parte a fondo mientras se construye, no solo que funcione.
 4. **Planificador** (`/api/plan`) — structured outputs + ciclo validar-y-reintentar contra
    la BD. Decidir el modelo con las evals y escribir la decisión aquí.
-5. **Observabilidad** — migración `0009` (`llm_calls`), `lib/agent/telemetry.ts`, y
+5. **Observabilidad** — migración `0010` (`llm_calls`), `lib/agent/telemetry.ts`, y
    `/observabilidad` con la vista de trazas por turno (la de coste es secundaria).
 
 Al implementar: verificar la API exacta del SDK contra `node_modules/@anthropic-ai/sdk`

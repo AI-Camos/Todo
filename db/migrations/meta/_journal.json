@@ -64,6 +64,13 @@
       "when": 1795743948754,
       "tag": "0008_pending_status",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795744757254,
+      "tag": "0009_rename_pending_this_week",
+      "breakpoints": true
     }
   ]
 }

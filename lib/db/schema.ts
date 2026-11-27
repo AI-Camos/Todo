@@ -9,12 +9,16 @@ import {
   date,
 } from "drizzle-orm/pg-core";
 
-// Estado de una tarea = columna del tablero Kanban.
+// Estado de una tarea = columna del tablero Kanban. El orden de las columnas en
+// pantalla lo decide `COLUMNS` en app/todo-list.tsx, no el de este enum (un
+// valor de enum de Postgres no se puede reordenar sin recrear el tipo).
+// El mismo enum es el estado de los bloques del calendario, pero `this_week`
+// solo tiene sentido para TAREAS: un bloque ya está en un día concreto.
 export const todoStatus = pgEnum("todo_status", [
-  "todo", // Por hacer
+  "todo", // Bandeja: todo lo que quieres hacer algún día, sin compromiso
   "doing", // En progreso
   "paused", // En pausa
-  "pending", // Pendiente
+  "this_week", // Esta semana: lo que priorizas estos 7 días
   "done", // Hecho
 ]);
 
