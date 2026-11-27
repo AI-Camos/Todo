@@ -451,7 +451,9 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   `title`) + columna `subtask_id` (nullable, FK→subtasks **`ON DELETE SET NULL`**) en
   `schedule_blocks`. Ver "Subtareas" abajo para el porqué del `SET NULL`.
   Migración `0007` (aplicada): `day_templates` + `template_blocks` (días modelo; ver
-  "Días modelo").
+  "Días modelo"). Migración `0008` (aplicada): valor `pending` («Pendiente») en el enum
+  `todo_status`, antes de `done`. Es el MISMO enum para tareas y bloques, así que añade
+  una columna al tablero y un estado más en el calendario.
 - 🔶 **Paso 3 — Route handlers:** CRUD de tareas ✅ (`app/api/todos/route.ts` GET/POST,
   `app/api/todos/[id]/route.ts` PATCH/DELETE; `runtime = "nodejs"`; PATCH valida `status`
   y `priority` contra los enums). Subtareas ✅ (`app/api/subtasks/route.ts` GET
@@ -464,9 +466,9 @@ changes* respecto a versiones anteriores: APIs, convenciones y estructura pueden
   la UI pueda fusionar la respuesta). Verificado end-to-end contra la BD. ⬜ Falta
   `/api/chat` (agente con tool use + streaming; requiere `ANTHROPIC_API_KEY`) y `/api/plan`.
   Días modelo ✅ (`app/api/day-templates/…`, `app/api/template-blocks/…`). ⬜ Falta la
-  migración `0008`: tabla `llm_calls` (ver "Observabilidad").
+  migración `0009`: tabla `llm_calls` (ver "Observabilidad").
 - 🔶 **Paso 4 — UI:** tablero Kanban ✅ (`app/page.tsx` + `app/todo-list.tsx`, componente
-  cliente con `@dnd-kit`: 4 columnas por `status`, tarjetas arrastrables que cambian de
+  cliente con `@dnd-kit`: 5 columnas por `status`, tarjetas arrastrables que cambian de
   estado al soltar, selector de prioridad por tarjeta con updates optimistas, editar inline
   y eliminar; orden dentro de columna por prioridad y recencia; **lista de subtareas** en
   cada tarjeta: añadir con Enter encadenado, renombrar al clic, borrar con ×, y el botón
@@ -536,7 +538,7 @@ itera el prompt, y sin evals se itera a ciegas):
    explique esta parte a fondo mientras se construye, no solo que funcione.
 4. **Planificador** (`/api/plan`) — structured outputs + ciclo validar-y-reintentar contra
    la BD. Decidir el modelo con las evals y escribir la decisión aquí.
-5. **Observabilidad** — migración `0008` (`llm_calls`), `lib/agent/telemetry.ts`, y
+5. **Observabilidad** — migración `0009` (`llm_calls`), `lib/agent/telemetry.ts`, y
    `/observabilidad` con la vista de trazas por turno (la de coste es secundaria).
 
 Al implementar: verificar la API exacta del SDK contra `node_modules/@anthropic-ai/sdk`

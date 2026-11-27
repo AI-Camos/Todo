@@ -11,7 +11,7 @@ import { TASK_COLORS, resolveColor } from "@/lib/colors";
 // Todo lo demás (arrastrar, sombra de destino, copiar/pegar, selección
 // múltiple, subtareas, medias horas) se comparte para que no diverjan.
 
-type Status = "todo" | "doing" | "paused" | "done";
+type Status = "todo" | "doing" | "paused" | "pending" | "done";
 type Priority = "low" | "medium" | "high";
 
 type Todo = {
@@ -117,7 +117,7 @@ const ROW_H = 48; // px por hora
 const HALF_H = ROW_H * STEP; // px por media hora
 const BODY_H = HOURS.length * ROW_H;
 
-const STATUSES: Status[] = ["todo", "doing", "paused", "done"];
+const STATUSES: Status[] = ["todo", "doing", "paused", "pending", "done"];
 
 const STATUS_UI: Record<
   Status,
@@ -140,6 +140,12 @@ const STATUS_UI: Record<
     dot: "bg-amber-500",
     block:
       "border-l-amber-500 bg-amber-50 text-amber-800 dark:bg-amber-950/60 dark:text-amber-100",
+  },
+  pending: {
+    label: "Pendiente",
+    dot: "bg-violet-500",
+    block:
+      "border-l-violet-500 bg-violet-50 text-violet-800 dark:bg-violet-950/60 dark:text-violet-100",
   },
   done: {
     label: "Hecho",

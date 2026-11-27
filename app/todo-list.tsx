@@ -20,7 +20,7 @@ import {
   type TaskColor,
 } from "@/lib/colors";
 
-type Status = "todo" | "doing" | "paused" | "done";
+type Status = "todo" | "doing" | "paused" | "pending" | "done";
 type Priority = "low" | "medium" | "high";
 
 type Todo = {
@@ -46,6 +46,7 @@ const COLUMNS: { status: Status; label: string; accent: string }[] = [
   { status: "todo", label: "Por hacer", accent: "bg-zinc-400" },
   { status: "doing", label: "En progreso", accent: "bg-blue-500" },
   { status: "paused", label: "En pausa", accent: "bg-amber-500" },
+  { status: "pending", label: "Pendiente", accent: "bg-violet-500" },
   { status: "done", label: "Hecho", accent: "bg-emerald-500" },
 ];
 
@@ -239,6 +240,7 @@ export default function TodoList() {
       todo: [],
       doing: [],
       paused: [],
+      pending: [],
       done: [],
     };
     for (const t of todos) groups[t.status].push(t);
@@ -310,7 +312,7 @@ export default function TodoList() {
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
         >
-          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-5">
             {COLUMNS.map((col) => (
               <Column
                 key={col.status}
